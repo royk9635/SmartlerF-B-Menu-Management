@@ -1291,6 +1291,9 @@ export const importMenuFromJson = async (jsonString: string, restaurantId: strin
 };
 
 export const importSystemMenuFromJson = async (jsonString: string): Promise<SystemImportStats> => {
+    if (!supabase) throw new Error('Supabase client not initialized');
+    
+    const payload: SystemMenuImportPayload = JSON.parse(jsonString);
     const stats: SystemImportStats = {
         restaurantsProcessed: 0,
         restaurantsSkipped: [],
@@ -1302,9 +1305,240 @@ export const importSystemMenuFromJson = async (jsonString: string): Promise<Syst
         modifierGroupsCreated: 0,
         modifierItemsCreated: 0,
     };
+
+    // Fetch all restaurants
+    const restaurants = await getAllRestaurants();
     
-    // Implementation can be added as needed
-    console.log('System menu import called');
+    // Helper to process categories recursively
+    const processCategories = async (nodes: SystemCategoryNode[], restaurantId: string, parentCategoryId?: string) => {
+        for (const node of nodes) {
+            if (parentCategoryId) {
+                // Process as subcategory
+                const { data: existingSubcats } = await supabase
+                    .from('subcategories')
+                    .select('*')
+                    .eq('category_id', parentCategoryId)
+                    .ilike('name', node.name);
+                
+                let subcat;
+                if (existingSubcats && existingSubcats.length > 0) {
+                    subcat = {
+                        id: existingSubcats[0].id,
+                        name: existingSubcats[0].name,
+                        sortOrder: existingSubcats[0].sort_order,
+                        categoryId: existingSubcats[0].category_id,
+                    };
+                } else {
+                    subcat = await addSubCategory({ 
+                        name: node.name, 
+                        sortOrder: node.sortOrder || 0, 
+                        categoryId: parentCategoryId 
+                    });
+                    stats.subcategoriesCreated++;
+                }
+                
+                if (node.categories && node.categories.length > 0) {
+                    await processCategories(node.categories, restaurantId, subcat.id);
+                }
+            } else {
+                // Process as category
+                const { data: existingCats } = await supabase
+                    .from('menu_categories')
+                    .select('*')
+                    .eq('restaurant_id', restaurantId)
+                    .ilike('name', node.name);
+                
+                let cat;
+                if (existingCats && existingCats.length > 0) {
+                    cat = {
+                        id: existingCats[0].id,
+                        name: existingCats[0].name,
+                        description: existingCats[0].description || '',
+                        sortOrder: existingCats[0].sort_order,
+                        activeFlag: existingCats[0].active_flag,
+                        restaurantId: existingCats[0].restaurant_id,
+                    };
+                } else {
+                    cat = await addCategory({ 
+                        name: node.name, 
+                        description: '', 
+                        sortOrder: node.sortOrder || 0, 
+                        activeFlag: true, 
+                        restaurantId: restaurantId 
+                    });
+                    stats.categoriesCreated++;
+                }
+                
+                if (node.categories && node.categories.length > 0) {
+                    await processCategories(node.categories, restaurantId, cat.id);
+                }
+            }
+        }
+    };
+
+    // Process restaurants and their categories
+    for (const restCatInfo of payload.restaurantCategory) {
+        let restaurant = restaurants.find(r => r.id === restCatInfo.restaurantId) || 
+                        restaurants.find(r => r.name.toLowerCase() === restCatInfo.restaurantName.toLowerCase());
+        
+        if (!restaurant) {
+            stats.restaurantsSkipped.push({ id: restCatInfo.restaurantId, name: restCatInfo.restaurantName });
+            continue;
+        }
+        
+        stats.restaurantsProcessed++;
+        await processCategories(restCatInfo.categories, restaurant.id);
+    }
+
+    // Process modifiers (condiments) and items
+    const condimentMap = new Map<string, SystemCondiment>(payload.condiments.map(c => [c.condimentCode, c]));
+    const processedModifierGroupsCache = new Map<string, string>(); // Key: "restaurantId-condimentCode", Value: "modifierGroupId"
+
+    for (const item of payload.items) {
+        let restaurant = restaurants.find(r => r.id === item.restaurantId) || 
+                        restaurants.find(r => r.name.toLowerCase() === item.restaurantName.toLowerCase());
+        
+        if (!restaurant) continue;
+
+        // Find category
+        const { data: categoryData } = await supabase
+            .from('menu_categories')
+            .select('*')
+            .eq('restaurant_id', restaurant.id)
+            .ilike('name', item.category)
+            .limit(1)
+            .single();
+        
+        if (!categoryData) continue;
+        
+        const category = {
+            id: categoryData.id,
+            name: categoryData.name,
+            description: categoryData.description || '',
+            sortOrder: categoryData.sort_order,
+            activeFlag: categoryData.active_flag,
+            restaurantId: categoryData.restaurant_id,
+        };
+
+        // Process and link modifiers for this item
+        const itemModifierGroupIds: string[] = [];
+        if (item.condimentCodes) {
+            const codes = item.condimentCodes.split(',').map(c => c.trim()).filter(Boolean);
+            for (const code of codes) {
+                const groupKey = `${restaurant.id}-${code}`;
+
+                if (processedModifierGroupsCache.has(groupKey)) {
+                    const groupId = processedModifierGroupsCache.get(groupKey)!;
+                    if (!itemModifierGroupIds.includes(groupId)) {
+                        itemModifierGroupIds.push(groupId);
+                    }
+                    continue;
+                }
+
+                const condiment = condimentMap.get(code);
+                if (condiment) {
+                    // Check if modifier group exists
+                    const { data: existingGroups } = await supabase
+                        .from('modifier_groups')
+                        .select('*')
+                        .eq('restaurant_id', restaurant.id)
+                        .ilike('name', condiment.condimentName)
+                        .limit(1);
+
+                    let group;
+                    if (existingGroups && existingGroups.length > 0) {
+                        group = {
+                            id: existingGroups[0].id,
+                            name: existingGroups[0].name,
+                            restaurantId: existingGroups[0].restaurant_id,
+                            minSelection: existingGroups[0].min_selection,
+                            maxSelection: existingGroups[0].max_selection,
+                        };
+                    } else {
+                        // Create new modifier group
+                        group = await addModifierGroup({
+                            name: condiment.condimentName,
+                            restaurantId: restaurant.id,
+                            minSelection: 0,
+                            maxSelection: 1,
+                        });
+                        stats.modifierGroupsCreated++;
+
+                        // Add modifier items
+                        for (const condimentItem of condiment.condimentItems) {
+                            await addModifierItem({
+                                name: condimentItem.condimentItemName,
+                                price: 0,
+                                modifierGroupId: group.id,
+                            });
+                            stats.modifierItemsCreated++;
+                        }
+                    }
+
+                    if (group) {
+                        if (!itemModifierGroupIds.includes(group.id)) {
+                            itemModifierGroupIds.push(group.id);
+                        }
+                        processedModifierGroupsCache.set(groupKey, group.id);
+                    }
+                }
+            }
+        }
+
+        // Check if menu item exists
+        const { data: existingItems } = await supabase
+            .from('menu_items')
+            .select('*')
+            .eq('item_code', item.itemCode)
+            .eq('category_id', category.id)
+            .limit(1);
+
+        let existing: MenuItem | null = null;
+        if (existingItems && existingItems.length > 0) {
+            const existingItem = existingItems[0];
+            // Fetch allergens and modifier groups for existing item
+            const { data: allergenData } = await supabase
+                .from('menu_item_allergens')
+                .select('allergen_id')
+                .eq('menu_item_id', existingItem.id);
+            
+            const { data: modifierGroupData } = await supabase
+                .from('menu_item_modifier_groups')
+                .select('modifier_group_id')
+                .eq('menu_item_id', existingItem.id);
+            
+            existing = {
+                ...mapSupabaseMenuItemToApp(existingItem),
+                allergens: (allergenData || []).map(a => a.allergen_id),
+                modifierGroupIds: (modifierGroupData || []).map(m => m.modifier_group_id),
+            };
+        }
+
+        const newItemData: Omit<MenuItem, 'id' | 'createdAt' | 'updatedAt'> = {
+            name: item.itemName,
+            itemCode: item.itemCode,
+            imageUrl: item.itemImage || null,
+            price: item.itemPrice,
+            categoryId: category.id,
+            description: item.itemDescription || '',
+            sortOrder: item.sortOrder || 0,
+            availabilityFlag: true,
+            bogo: false,
+            soldOut: false,
+            currency: Currency.INR,
+            tenantId: 'tenant-123',
+            allergens: [],
+            modifierGroupIds: itemModifierGroupIds,
+        };
+
+        if (existing) {
+            await updateMenuItem({ ...existing, ...newItemData });
+            stats.itemsUpdated++;
+        } else {
+            await addMenuItem(newItemData);
+            stats.itemsCreated++;
+        }
+    }
     
     return stats;
 };
