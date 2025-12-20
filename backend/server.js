@@ -1,11 +1,12 @@
-const express = require('express');
-const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const { Server } = require('socket.io');
-const http = require('http');
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
+import express from 'express';
+import cors from 'cors';
+import jwt from 'jsonwebtoken';
+import { Server } from 'socket.io';
+import http from 'http';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import fs from 'fs';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const server = http.createServer(app);
@@ -729,7 +730,6 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   // #region agent log
-  const fs = require('fs');
   try { fs.appendFileSync('/Users/kaushik/Desktop/F&Bportal 181225/smartler-f-b-menu-management/.cursor/debug.log', JSON.stringify({location:'server.js:640',message:'/api/auth/me endpoint hit',data:{hasAuth:!!req.headers.authorization,method:req.method,path:req.path},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'}) + '\n'); } catch(e) {}
   // #endregion
   try {
@@ -2077,7 +2077,6 @@ app.use((req, res) => {
 if (!isVercel) {
   server.listen(PORT, () => {
     // #region agent log
-    const fs = require('fs');
     try { fs.appendFileSync('/Users/kaushik/Desktop/F&Bportal 181225/smartler-f-b-menu-management/.cursor/debug.log', JSON.stringify({location:'server.js:1972',message:'Server started successfully',data:{PORT,NODE_ENV},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'}) + '\n'); } catch(e) {}
     // #endregion
     console.log(`\n🚀 Backend server running on port ${PORT}`);
@@ -2108,4 +2107,4 @@ if (!isVercel) {
   console.log('🚀 Running on Vercel - Serverless mode');
 }
 
-module.exports = { app, server, io };
+export { app, server, io };
