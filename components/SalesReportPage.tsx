@@ -367,6 +367,7 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
                             <th className="text-left py-3 px-4 uppercase font-semibold text-sm text-slate-600">Date & Time</th>
                             <th className="text-center py-3 px-4 uppercase font-semibold text-sm text-slate-600">Items</th>
                             <th className="text-right py-3 px-4 uppercase font-semibold text-sm text-slate-600">Amount</th>
+                            <th className="text-center py-3 px-4 uppercase font-semibold text-sm text-slate-600">Payment</th>
                             <th className="text-center py-3 px-4 uppercase font-semibold text-sm text-slate-600">Bill</th>
                         </tr>
                     </thead>
@@ -379,6 +380,20 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
                                 <td className="py-3 px-4">{new Date(sale.saleDate).toLocaleString()}</td>
                                 <td className="py-3 px-4 text-center">{sale.items.reduce((sum, item) => sum + item.quantity, 0)}</td>
                                 <td className="py-3 px-4 text-right font-mono">₹{sale.totalAmount.toFixed(2)}</td>
+                                <td className="py-3 px-4 text-center">
+                                    {sale.paymentStatus ? (
+                                        <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                                            sale.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                                            sale.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                            sale.paymentStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                                            'bg-slate-100 text-slate-700'
+                                        }`}>
+                                            {sale.paymentStatus.charAt(0).toUpperCase() + sale.paymentStatus.slice(1)}
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs text-slate-400">—</span>
+                                    )}
+                                </td>
                                 <td className="py-3 px-4 text-center">
                                     <button onClick={() => handleOpenBillModal(sale)} className="text-sky-500 hover:text-sky-700 p-2 rounded-full hover:bg-sky-100 transition" title="View Bill">
                                         <InfoIcon className="h-5 w-5"/>

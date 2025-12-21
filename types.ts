@@ -144,6 +144,9 @@ export interface Sale {
     saleDate: string; // ISO string
     restaurantId: string;
     tableNumber: number;
+    paymentId?: string | null;
+    paymentStatus?: 'paid' | 'pending' | 'failed' | 'refunded' | null;
+    paymentMethod?: string | null;
 }
 
 // FIX: Moved PublicMenu interface here from services/mockApiService.ts to fix import error.
@@ -292,6 +295,10 @@ export interface LiveOrder {
     restaurantId: string;
     tableNumber: number | null;
     status: OrderStatus;
+    paymentId?: string | null;
+    paymentStatus?: 'paid' | 'pending' | 'failed' | 'refunded' | null;
+    paymentMethod?: string | null;
+    paymentDate?: string | null;
 }
 
 // --- API Token Types ---

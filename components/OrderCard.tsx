@@ -65,6 +65,21 @@ const OrderCard: React.FC<OrderCardProps> = ({ order, menuItemMap, onUpdateStatu
                     </div>
                 </div>
                 <p className="text-xs text-slate-400 font-mono">ID: ...{order.id.slice(-6)}</p>
+                {order.paymentStatus && (
+                    <div className="mt-2 flex items-center space-x-2">
+                        <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                            order.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                            order.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                            order.paymentStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-slate-100 text-slate-700'
+                        }`}>
+                            {order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1)}
+                        </span>
+                        {order.paymentMethod && (
+                            <span className="text-xs text-slate-500">via {order.paymentMethod}</span>
+                        )}
+                    </div>
+                )}
             </div>
             <div className="p-4 flex-grow max-h-48 overflow-y-auto">
                 <ul className="space-y-2 text-sm">

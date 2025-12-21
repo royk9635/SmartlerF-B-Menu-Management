@@ -33,6 +33,37 @@ const BillModal: React.FC<BillModalProps> = ({ isOpen, onClose, sale, menuItemMa
                         <p className="font-medium text-slate-800">{saleDate.toLocaleString()}</p>
                     </div>
 
+                    {sale.paymentStatus && (
+                        <div className="border-t border-slate-200 pt-4">
+                            <h4 className="font-semibold text-slate-700 mb-2">Payment Information</h4>
+                            <div className="space-y-2">
+                                <div className="flex justify-between">
+                                    <p className="text-sm text-slate-500">Payment Status</p>
+                                    <span className={`text-sm font-semibold px-2 py-1 rounded ${
+                                        sale.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                                        sale.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                        sale.paymentStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                                        'bg-slate-100 text-slate-700'
+                                    }`}>
+                                        {sale.paymentStatus.charAt(0).toUpperCase() + sale.paymentStatus.slice(1)}
+                                    </span>
+                                </div>
+                                {sale.paymentId && (
+                                    <div className="flex justify-between">
+                                        <p className="text-sm text-slate-500">Payment ID</p>
+                                        <p className="text-sm font-mono text-slate-800">{sale.paymentId}</p>
+                                    </div>
+                                )}
+                                {sale.paymentMethod && (
+                                    <div className="flex justify-between">
+                                        <p className="text-sm text-slate-500">Payment Method</p>
+                                        <p className="text-sm font-medium text-slate-800">{sale.paymentMethod}</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="border-t border-slate-200 pt-4">
                         <h4 className="font-semibold text-slate-700 mb-2">Items</h4>
                         <ul className="divide-y divide-slate-200">

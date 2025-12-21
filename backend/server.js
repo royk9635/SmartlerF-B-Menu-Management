@@ -1665,7 +1665,7 @@ app.get('/api/public/menu/:restaurantId', async (req, res) => {
 // Public order creation endpoint (no authentication required)
 app.post('/api/public/orders', async (req, res) => {
   try {
-    const { restaurantId, tableNumber, items, customerName, customerPhone, customerEmail, notes } = req.body;
+    const { restaurantId, tableNumber, items, customerName, customerPhone, customerEmail, notes, paymentId, paymentStatus, paymentMethod, paymentDate } = req.body;
     
     // Validate required fields
     if (!restaurantId || !items || !Array.isArray(items) || items.length === 0) {
@@ -1733,7 +1733,11 @@ app.post('/api/public/orders', async (req, res) => {
       items: processedItems,
       total_amount: parseFloat(totalAmount.toFixed(2)),
       status: 'New',
-      placed_at: new Date().toISOString()
+      placed_at: new Date().toISOString(),
+      payment_id: paymentId || null,
+      payment_status: paymentStatus || null,
+      payment_method: paymentMethod || null,
+      payment_date: paymentDate || null
     };
     
     // Save order to database
@@ -1872,7 +1876,10 @@ app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
           table_number: order.table_number,
           total_amount: order.total_amount,
           sale_date: order.placed_at || new Date().toISOString(),
-          items: order.items
+          items: order.items,
+          payment_id: order.payment_id || null,
+          payment_status: order.payment_status || null,
+          payment_method: order.payment_method || null
         };
         
         const { error: saleError } = await supabase

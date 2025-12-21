@@ -168,7 +168,10 @@ CREATE TABLE IF NOT EXISTS sales (
     sale_date TIMESTAMPTZ NOT NULL,
     restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
     table_number INT,
-    items JSONB NOT NULL -- Store array of {menuItemId, quantity, price}
+    items JSONB NOT NULL, -- Store array of {menuItemId, quantity, price}
+    payment_id TEXT,
+    payment_status TEXT,
+    payment_method TEXT
 );
 
 -- Live Orders Table
@@ -179,7 +182,11 @@ CREATE TABLE IF NOT EXISTS live_orders (
     placed_at TIMESTAMPTZ DEFAULT NOW(),
     restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
     table_number INT,
-    status order_status_type NOT NULL DEFAULT 'New'
+    status order_status_type NOT NULL DEFAULT 'New',
+    payment_id TEXT,
+    payment_status TEXT,
+    payment_method TEXT,
+    payment_date TIMESTAMPTZ
 );
 
 -- API Tokens Table (for tablet apps)
