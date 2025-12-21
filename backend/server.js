@@ -358,6 +358,7 @@ const authenticateToken = async (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
+    console.warn(`[Auth] No token provided for ${req.method} ${req.path}`);
     return res.status(401).json({ success: false, message: 'Access token required' });
   }
 
@@ -382,10 +383,16 @@ const authenticateToken = async (req, res, next) => {
         };
         req.authType = 'supabase';
         return next();
+      } else {
+        console.warn(`[Auth] Supabase user found but not in users table: ${authUser.id}`);
       }
+    } else if (authError) {
+      // Log Supabase auth error for debugging (but don't fail yet, try other methods)
+      console.debug(`[Auth] Supabase auth failed: ${authError.message}`);
     }
   } catch (supabaseError) {
     // Not a Supabase token, try JWT
+    console.debug(`[Auth] Supabase token check error: ${supabaseError.message}`);
   }
 
   // Try JWT token (for backward compatibility)
@@ -409,6 +416,7 @@ const authenticateToken = async (req, res, next) => {
       if (!error && apiToken) {
         // Check if token is expired
         if (apiToken.expires_at && new Date(apiToken.expires_at) < new Date()) {
+          console.warn(`[Auth] API token expired: ${apiToken.id}`);
           return res.status(403).json({ success: false, message: 'API token has expired' });
         }
         
@@ -429,13 +437,21 @@ const authenticateToken = async (req, res, next) => {
           .eq('id', apiToken.id);
         
         return next();
+      } else if (error && error.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is expected, other errors are real issues
+        console.error(`[Auth] Error checking API token: ${error.message}`);
       }
     } catch (dbErr) {
-      console.error('Error checking API token:', dbErr);
+      console.error('[Auth] Error checking API token:', dbErr);
     }
     
     // Neither JWT nor API token is valid
-    return res.status(403).json({ success: false, message: 'Invalid token' });
+    console.warn(`[Auth] Invalid token for ${req.method} ${req.path} - token preview: ${token.substring(0, 10)}...`);
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Invalid or expired token. Please log in again.',
+      hint: 'The authentication token provided is not valid. This may happen if the token has expired or the session has ended.'
+    });
   });
 };
 
