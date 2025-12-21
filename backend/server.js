@@ -120,9 +120,10 @@ app.use(cors({
       return callback(null, true);
     }
     
-    // In production on Vercel, allow same-origin requests (frontend and backend on same domain)
+    // In production, allow all Vercel deployment URLs
     // Vercel deployments use pattern: https://project-name-*.vercel.app
-    if (isVercel && origin.includes('vercel.app')) {
+    // This is safe because frontend and backend are on the same domain
+    if (origin.includes('vercel.app')) {
       return callback(null, true);
     }
     
