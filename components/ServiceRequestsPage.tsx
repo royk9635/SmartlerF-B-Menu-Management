@@ -228,9 +228,9 @@ const ServiceRequestsPage: React.FC<ServiceRequestsPageProps> = ({ showToast, cu
                     className="border border-slate-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500"
                 >
                     <option value="all">All Status</option>
-                    <option value={ServiceRequestStatus.PENDING}>Pending</option>
-                    <option value={ServiceRequestStatus.ACKNOWLEDGED}>Acknowledged</option>
-                    <option value={ServiceRequestStatus.COMPLETED}>Completed</option>
+                    <option value="pending">Pending</option>
+                    <option value="acknowledged">Acknowledged</option>
+                    <option value="completed">Completed</option>
                 </select>
                 <input
                     type="number"
