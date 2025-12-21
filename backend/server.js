@@ -2609,12 +2609,32 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
       await processCategories(restCatInfo.categories, restaurant.id);
     }
 
+    // Pre-fetch all categories for all restaurants to avoid repeated queries
+    const categoryMap = new Map(); // Key: "restaurantId-categoryName", Value: category object
+    for (const restaurant of restaurants) {
+      const { data: categories } = await supabase
+        .from('menu_categories')
+        .select('*')
+        .eq('restaurant_id', restaurant.id);
+      
+      if (categories) {
+        categories.forEach(cat => {
+          categoryMap.set(`${restaurant.id}-${cat.name.toLowerCase()}`, cat);
+        });
+      }
+    }
+
     // Process modifiers (condiments) and items
     const condimentMap = new Map();
     if (payload.condiments && Array.isArray(payload.condiments)) {
       payload.condiments.forEach(c => condimentMap.set(c.condimentCode, c));
     }
     const processedModifierGroupsCache = new Map(); // Key: "restaurantId-condimentCode", Value: "modifierGroupId"
+
+    // Batch collections for bulk operations
+    const itemsToInsert = [];
+    const itemsToUpdate = [];
+    const modifierGroupLinks = []; // Will be inserted in bulk at the end
 
     if (payload.items && Array.isArray(payload.items)) {
       for (const item of payload.items) {
@@ -2623,21 +2643,16 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
         
         if (!restaurant) continue;
 
-        // Find category
-        const { data: categoryData, error: categoryError } = await supabase
-          .from('menu_categories')
-          .select('*')
-          .eq('restaurant_id', restaurant.id)
-          .ilike('name', item.category)
-          .limit(1)
-          .maybeSingle();
+        // Find category using pre-fetched map
+        const categoryKey = `${restaurant.id}-${item.category.toLowerCase()}`;
+        const categoryData = categoryMap.get(categoryKey);
         
-        if (categoryError || !categoryData) {
+        if (!categoryData) {
           console.warn(`Category not found for item ${item.itemName}: ${item.category}`);
           continue;
         }
 
-        // Process and link modifiers for this item
+        // Process and link modifiers for this item (collect for batch processing)
         const itemModifierGroupIds = [];
         if (item.condimentCodes) {
           const codes = item.condimentCodes.split(',').map(c => c.trim()).filter(Boolean);
@@ -2654,7 +2669,7 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
 
             const condiment = condimentMap.get(code);
             if (condiment) {
-              // Check if modifier group exists
+              // Check if modifier group exists (use cache or fetch)
               const { data: existingGroups } = await supabase
                 .from('modifier_groups')
                 .select('*')
@@ -2698,22 +2713,22 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
                 };
                 stats.modifierGroupsCreated++;
 
-                // Add modifier items
-                if (condiment.condimentItems && Array.isArray(condiment.condimentItems)) {
-                  for (const condimentItem of condiment.condimentItems) {
-                    const { error: itemError } = await supabase
-                      .from('modifier_items')
-                      .insert({
-                        name: condimentItem.condimentItemName,
-                        price: 0,
-                        modifier_group_id: group.id
-                      });
-                    
-                    if (!itemError) {
-                      stats.modifierItemsCreated++;
-                    } else {
-                      console.error('Error creating modifier item:', itemError);
-                    }
+                // Batch insert modifier items
+                if (condiment.condimentItems && Array.isArray(condiment.condimentItems) && condiment.condimentItems.length > 0) {
+                  const modifierItems = condiment.condimentItems.map(ci => ({
+                    name: ci.condimentItemName,
+                    price: 0,
+                    modifier_group_id: group.id
+                  }));
+                  
+                  const { error: itemsError } = await supabase
+                    .from('modifier_items')
+                    .insert(modifierItems);
+                  
+                  if (!itemsError) {
+                    stats.modifierItemsCreated += modifierItems.length;
+                  } else {
+                    console.error('Error batch creating modifier items:', itemsError);
                   }
                 }
               }
@@ -2727,14 +2742,6 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
             }
           }
         }
-
-        // Check if menu item exists
-        const { data: existingItems } = await supabase
-          .from('menu_items')
-          .select('*')
-          .eq('item_code', item.itemCode)
-          .eq('category_id', categoryData.id)
-          .limit(1);
 
         const itemData = {
           name: item.itemName,
@@ -2751,60 +2758,133 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           bogo: false
         };
 
-        if (existingItems && existingItems.length > 0) {
-          // Update existing item
-          const { error: updateError } = await supabase
-            .from('menu_items')
-            .update(itemData)
-            .eq('id', existingItems[0].id);
+        // Store item data with modifier groups for batch processing
+        itemsToInsert.push({
+          ...itemData,
+          itemModifierGroupIds,
+          itemCode: item.itemCode,
+          categoryId: categoryData.id
+        });
+      }
+
+      // Batch process items: first check which exist, then batch insert/update
+      if (itemsToInsert.length > 0) {
+        // Fetch all existing items in one query
+        const itemCodes = itemsToInsert.map(i => i.item_code);
+        const categoryIds = [...new Set(itemsToInsert.map(i => i.categoryId))];
+        
+        const { data: existingItems } = await supabase
+          .from('menu_items')
+          .select('id, item_code, category_id')
+          .in('item_code', itemCodes)
+          .in('category_id', categoryIds);
+
+        const existingMap = new Map();
+        if (existingItems) {
+          existingItems.forEach(ei => {
+            existingMap.set(`${ei.item_code}-${ei.category_id}`, ei.id);
+          });
+        }
+
+        // Separate items into insert and update batches
+        const insertBatch = [];
+        const updateBatch = [];
+        const itemIdMap = new Map(); // Track new item IDs after insert
+
+        for (const itemData of itemsToInsert) {
+          const key = `${itemData.item_code}-${itemData.categoryId}`;
+          const existingId = existingMap.get(key);
           
-          if (!updateError) {
-            stats.itemsUpdated++;
-            
-            // Update modifier groups for this item
-            // First, remove existing links
-            await supabase
-              .from('menu_item_modifier_groups')
-              .delete()
-              .eq('menu_item_id', existingItems[0].id);
-            
-            // Then add new links
-            if (itemModifierGroupIds.length > 0) {
-              const links = itemModifierGroupIds.map(groupId => ({
-                menu_item_id: existingItems[0].id,
-                modifier_group_id: groupId
-              }));
-              await supabase
-                .from('menu_item_modifier_groups')
-                .insert(links);
-            }
+          if (existingId) {
+            updateBatch.push({
+              id: existingId,
+              ...itemData,
+              itemModifierGroupIds: itemData.itemModifierGroupIds
+            });
           } else {
-            console.error('Error updating menu item:', updateError);
+            insertBatch.push(itemData);
           }
-        } else {
-          // Create new item
-          const { data: newItem, error: insertError } = await supabase
+        }
+
+        // Batch insert new items
+        if (insertBatch.length > 0) {
+          const insertData = insertBatch.map(({ itemModifierGroupIds, itemCode, categoryId, ...item }) => item);
+          const { data: newItems, error: insertError } = await supabase
             .from('menu_items')
-            .insert(itemData)
-            .select()
-            .single();
+            .insert(insertData)
+            .select('id, item_code, category_id');
           
-          if (insertError) {
-            console.error('Error creating menu item:', insertError);
-            continue;
+          if (!insertError && newItems) {
+            stats.itemsCreated += newItems.length;
+            
+            // Map new items for modifier linking
+            newItems.forEach((ni, idx) => {
+              const originalItem = insertBatch[idx];
+              itemIdMap.set(`${ni.item_code}-${ni.category_id}`, {
+                id: ni.id,
+                modifierGroupIds: originalItem.itemModifierGroupIds
+              });
+            });
+          } else if (insertError) {
+            console.error('Error batch inserting items:', insertError);
           }
-          
-          stats.itemsCreated++;
-          
-          // Link modifier groups to the new item
-          if (itemModifierGroupIds.length > 0) {
-            const links = itemModifierGroupIds.map(groupId => ({
-              menu_item_id: newItem.id,
-              modifier_group_id: groupId
-            }));
+        }
+
+        // Batch update existing items
+        if (updateBatch.length > 0) {
+          // Group updates by item to avoid conflicts
+          for (const item of updateBatch) {
+            const { id, itemModifierGroupIds, itemCode, categoryId, ...updateData } = item;
+            
+            const { error: updateError } = await supabase
+              .from('menu_items')
+              .update(updateData)
+              .eq('id', id);
+            
+            if (!updateError) {
+              stats.itemsUpdated++;
+              
+              // Store modifier links for batch processing
+              if (itemModifierGroupIds.length > 0) {
+                // Remove existing links first
+                await supabase
+                  .from('menu_item_modifier_groups')
+                  .delete()
+                  .eq('menu_item_id', id);
+                
+                // Add to batch links
+                itemModifierGroupIds.forEach(groupId => {
+                  modifierGroupLinks.push({
+                    menu_item_id: id,
+                    modifier_group_id: groupId
+                  });
+                });
+              }
+            }
+          }
+        }
+
+        // Batch insert all modifier group links for new items
+        for (const [key, itemInfo] of itemIdMap.entries()) {
+          if (itemInfo.modifierGroupIds.length > 0) {
+            itemInfo.modifierGroupIds.forEach(groupId => {
+              modifierGroupLinks.push({
+                menu_item_id: itemInfo.id,
+                modifier_group_id: groupId
+              });
+            });
+          }
+        }
+
+        // Bulk insert all modifier group links
+        if (modifierGroupLinks.length > 0) {
+          // Insert in chunks of 100 to avoid payload size limits
+          const chunkSize = 100;
+          for (let i = 0; i < modifierGroupLinks.length; i += chunkSize) {
+            const chunk = modifierGroupLinks.slice(i, i + chunkSize);
             await supabase
               .from('menu_item_modifier_groups')
-              .insert(links);
+              .insert(chunk);
           }
         }
       }
