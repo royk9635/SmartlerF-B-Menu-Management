@@ -52,6 +52,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   }
 });
 
+// Create a separate client for auth operations (uses anon key for proper session handling)
+// The service role key doesn't return sessions properly for signInWithPassword
+const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
+
 console.log('✅ Supabase client initialized');
 console.log(`   URL: ${SUPABASE_URL}`);
 
@@ -518,7 +527,8 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     // Use Supabase Auth - handles password verification automatically!
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    // Use supabaseAuth (anon key) for auth operations to get proper session
+    const { data: authData, error: authError } = await supabaseAuth.auth.signInWithPassword({
       email,
       password
     });
