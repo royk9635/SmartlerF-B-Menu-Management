@@ -524,9 +524,19 @@ app.post('/api/auth/login', async (req, res) => {
     });
     
     if (authError || !authData.user) {
+      console.error('Supabase auth error:', authError);
       return res.status(401).json({
         success: false,
         message: authError?.message || 'Invalid credentials'
+      });
+    }
+    
+    // Check if session exists
+    if (!authData.session || !authData.session.access_token) {
+      console.error('No session or access token returned from Supabase Auth');
+      return res.status(500).json({
+        success: false,
+        message: 'Authentication failed: No session token received'
       });
     }
     
@@ -539,7 +549,7 @@ app.post('/api/auth/login', async (req, res) => {
     
     if (userError || !user) {
       // User exists in auth but not in users table - create it
-      const { data: newUser } = await supabase
+      const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert({
           id: authData.user.id,
@@ -551,10 +561,12 @@ app.post('/api/auth/login', async (req, res) => {
         .select('id, name, email, role, property_id')
         .single();
       
-      if (!newUser) {
+      if (createError || !newUser) {
+        console.error('Error creating user profile:', createError);
         return res.status(500).json({
           success: false,
-          message: 'Failed to create user profile'
+          message: 'Failed to create user profile',
+          error: createError?.message || 'Unknown error'
         });
       }
       
@@ -585,9 +597,11 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: error instanceof Error ? error.message : 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
