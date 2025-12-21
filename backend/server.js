@@ -1062,10 +1062,12 @@ app.get('/api/restaurants', authenticateToken, async (req, res) => {
           .single();
         
         if (propertyError || !property) {
-          return res.status(404).json({
-            success: false,
-            message: `Property not found with tenant_id: ${propertyId}`,
-            error: propertyError?.message || 'Property not found'
+          // If property not found, return empty array instead of 404
+          // This allows the request to succeed even if property doesn't exist
+          console.warn(`Property not found with tenant_id: ${propertyId}, returning empty restaurants list`);
+          return res.json({
+            success: true,
+            data: []
           });
         }
         
@@ -1224,8 +1226,8 @@ app.delete('/api/restaurants/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Categories endpoints
-app.get('/api/categories', authenticateToken, async (req, res) => {
+// Categories endpoints handler
+const handleGetCategories = async (req, res) => {
   try {
     const { restaurantId } = req.query;
     let query = supabase
@@ -1262,7 +1264,12 @@ app.get('/api/categories', authenticateToken, async (req, res) => {
       message: 'Internal server error'
     });
   }
-});
+};
+
+// Alias endpoint for backward compatibility (tablet app might use this)
+app.get('/api/menu/categories', authenticateToken, handleGetCategories);
+
+app.get('/api/categories', authenticateToken, handleGetCategories);
 
 app.post('/api/categories', authenticateToken, async (req, res) => {
   try {
