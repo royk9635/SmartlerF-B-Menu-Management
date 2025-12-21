@@ -1643,6 +1643,31 @@ app.post('/api/public/orders', async (req, res) => {
       });
     }
     
+    // Validate restaurantId is a valid UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(restaurantId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid restaurantId format. restaurantId must be a valid UUID.',
+        error: `Received: "${restaurantId}". Expected format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+      });
+    }
+    
+    // Verify restaurant exists in database
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Restaurant not found',
+        error: `Restaurant with ID "${restaurantId}" does not exist in the database`
+      });
+    }
+    
     // Calculate total amount from items
     let totalAmount = 0;
     const processedItems = items.map(item => {
@@ -1688,10 +1713,31 @@ app.post('/api/public/orders', async (req, res) => {
     
     if (error) {
       console.error('Supabase error creating order:', error);
+      
+      // Handle specific error cases
+      if (error.code === '22P02') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid UUID format in request data',
+          error: error.message,
+          hint: 'Please ensure all IDs (restaurantId, menuItemId, etc.) are valid UUIDs'
+        });
+      }
+      
+      if (error.code === '23503') {
+        return res.status(400).json({
+          success: false,
+          message: 'Foreign key constraint violation',
+          error: error.message,
+          hint: 'One or more referenced IDs (restaurantId, menuItemId) do not exist in the database'
+        });
+      }
+      
       return res.status(500).json({
         success: false,
         message: 'Failed to create order',
-        error: error.message
+        error: error.message,
+        code: error.code || 'UNKNOWN_ERROR'
       });
     }
     
