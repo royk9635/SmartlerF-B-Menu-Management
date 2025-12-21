@@ -1559,7 +1559,22 @@ app.put('/api/menu-items/:id', authenticateToken, async (req, res) => {
     if (req.body.imageOrientation !== undefined) updateData.image_orientation = req.body.imageOrientation;
     if (req.body.availableTime !== undefined) updateData.available_time = req.body.availableTime;
     if (req.body.availableDate !== undefined) updateData.available_date = req.body.availableDate;
-    if (req.body.attributes !== undefined) updateData.attributes = req.body.attributes;
+    if (req.body.attributes !== undefined) {
+      // Handle attributes - can be object, null, or empty object
+      if (req.body.attributes === null || (typeof req.body.attributes === 'object' && Object.keys(req.body.attributes).length === 0)) {
+        updateData.attributes = null;
+      } else if (typeof req.body.attributes === 'object') {
+        updateData.attributes = req.body.attributes;
+      } else {
+        // If it's a string (comma-separated), parse it
+        const attributeNames = String(req.body.attributes).split(',').map(a => a.trim()).filter(Boolean);
+        const attributesObj = {};
+        attributeNames.forEach(attrName => {
+          attributesObj[attrName] = true;
+        });
+        updateData.attributes = Object.keys(attributesObj).length > 0 ? attributesObj : null;
+      }
+    }
     
     const { data, error } = await supabase
       .from('menu_items')
@@ -2823,7 +2838,13 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
 
         // Batch insert new items
         if (insertBatch.length > 0) {
-          const insertData = insertBatch.map(({ itemModifierGroupIds, itemCode, categoryId, ...item }) => item);
+          const insertData = insertBatch.map(({ itemModifierGroupIds, itemCode, categoryId, ...item }) => {
+            // Ensure attributes is properly formatted (null or object, not undefined)
+            if (item.attributes === undefined) {
+              item.attributes = null;
+            }
+            return item;
+          });
           const { data: newItems, error: insertError } = await supabase
             .from('menu_items')
             .insert(insertData)
@@ -2850,6 +2871,10 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           // Group updates by item to avoid conflicts
           for (const item of updateBatch) {
             const { id, itemModifierGroupIds, itemCode, categoryId, ...updateData } = item;
+            // Ensure attributes is properly formatted (null or object, not undefined)
+            if (updateData.attributes === undefined) {
+              updateData.attributes = null;
+            }
             
             const { error: updateError } = await supabase
               .from('menu_items')
