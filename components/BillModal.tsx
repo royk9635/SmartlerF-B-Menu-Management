@@ -43,9 +43,9 @@ const BillModal: React.FC<BillModalProps> = ({ isOpen, onClose, sale, menuItemMa
                                      <li key={`${item.menuItemId}-${index}`} className="py-2 flex justify-between items-center">
                                         <div>
                                             <p className="font-medium text-slate-800">{menuItem?.name || 'Unknown Item'}</p>
-                                            <p className="text-sm text-slate-500">{item.quantity} x ${item.price.toFixed(2)}</p>
+                                            <p className="text-sm text-slate-500">{item.quantity} x ₹{item.price.toFixed(2)}</p>
                                         </div>
-                                        <p className="font-mono text-slate-800">${subtotal.toFixed(2)}</p>
+                                        <p className="font-mono text-slate-800">₹{subtotal.toFixed(2)}</p>
                                     </li>
                                 );
                             })}
@@ -54,7 +54,7 @@ const BillModal: React.FC<BillModalProps> = ({ isOpen, onClose, sale, menuItemMa
 
                     <div className="border-t-2 border-dashed border-slate-300 pt-4 flex justify-between items-center">
                         <p className="text-lg font-bold text-slate-800">Total</p>
-                        <p className="text-lg font-bold font-mono text-slate-800">${sale.totalAmount.toFixed(2)}</p>
+                        <p className="text-lg font-bold font-mono text-slate-800">₹{sale.totalAmount.toFixed(2)}</p>
                     </div>
 
                 </div>
