@@ -1047,7 +1047,31 @@ app.get('/api/restaurants', authenticateToken, async (req, res) => {
       .order('created_at', { ascending: false });
     
     if (propertyId) {
-      query = query.eq('property_id', propertyId);
+      // Check if propertyId is a valid UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      
+      if (uuidRegex.test(propertyId)) {
+        // It's a UUID, use it directly
+        query = query.eq('property_id', propertyId);
+      } else {
+        // It's not a UUID, treat it as tenant_id and look up the property first
+        const { data: property, error: propertyError } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('tenant_id', propertyId)
+          .single();
+        
+        if (propertyError || !property) {
+          return res.status(404).json({
+            success: false,
+            message: `Property not found with tenant_id: ${propertyId}`,
+            error: propertyError?.message || 'Property not found'
+          });
+        }
+        
+        // Use the property's UUID to filter restaurants
+        query = query.eq('property_id', property.id);
+      }
     }
     
     const { data, error } = await query;
