@@ -397,18 +397,18 @@ export const serviceRequestsApi = {
     if (params?.status) queryParams.append('status', params.status);
     if (params?.tableNumber) queryParams.append('tableNumber', params.tableNumber.toString());
     
-    const url = `/api/service-requests${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const url = `/service-requests${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     const response = await httpClient.get<ApiResponse<ServiceRequest[]>>(url);
     return response.data;
   },
 
   acknowledge: async (id: string): Promise<ServiceRequest> => {
-    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/api/service-requests/${id}/acknowledge`, {});
+    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/service-requests/${id}/acknowledge`, {});
     return response.data;
   },
 
   complete: async (id: string): Promise<ServiceRequest> => {
-    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/api/service-requests/${id}/complete`, {});
+    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/service-requests/${id}/complete`, {});
     return response.data;
   },
 };
