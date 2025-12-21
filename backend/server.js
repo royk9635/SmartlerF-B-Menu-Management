@@ -1391,8 +1391,8 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Menu items endpoints
-app.get('/api/menu-items', authenticateToken, async (req, res) => {
+// Menu items endpoints handler
+const handleGetMenuItems = async (req, res) => {
   try {
     const { categoryId, subCategoryId } = req.query;
     let query = supabase
@@ -1433,7 +1433,12 @@ app.get('/api/menu-items', authenticateToken, async (req, res) => {
       message: 'Internal server error'
     });
   }
-});
+};
+
+// Alias endpoint for backward compatibility (tablet app might use this)
+app.get('/api/menu/items', authenticateToken, handleGetMenuItems);
+
+app.get('/api/menu-items', authenticateToken, handleGetMenuItems);
 
 app.post('/api/menu-items', authenticateToken, async (req, res) => {
   try {
