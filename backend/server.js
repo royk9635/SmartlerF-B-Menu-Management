@@ -1706,6 +1706,108 @@ app.delete('/api/menu-items/:id', authenticateToken, async (req, res) => {
 });
 
 // Public menu endpoint
+// Public menu endpoint - supports both /api/public/menu?restaurantId=xxx and /api/public/menu/:restaurantId
+app.get('/api/public/menu', async (req, res) => {
+  try {
+    const { restaurantId } = req.query;
+    
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'restaurantId is required as query parameter'
+      });
+    }
+    
+    // Get restaurant
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('*')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Restaurant not found'
+      });
+    }
+    
+    // Get categories with items
+    const { data: categories, error: categoriesError } = await supabase
+      .from('menu_categories')
+      .select(`
+        *,
+        menu_items (
+          id,
+          name,
+          description,
+          price,
+          image_url,
+          availability_flag,
+          allergens:menu_item_allergens (
+            allergen:allergens (id, name)
+          ),
+          attributes
+        )
+      `)
+      .eq('restaurant_id', restaurantId)
+      .eq('active_flag', true)
+      .order('sort_order', { ascending: true });
+    
+    if (categoriesError) {
+      console.error('Supabase error:', categoriesError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch menu',
+        error: categoriesError.message
+      });
+    }
+    
+    // Format categories with items
+    const formattedCategories = (categories || []).map(category => ({
+      id: category.id,
+      name: category.name,
+      description: category.description,
+      sortOrder: category.sort_order,
+      activeFlag: category.active_flag,
+      restaurantId: category.restaurant_id,
+      items: (category.menu_items || [])
+        .filter(item => item.availability_flag)
+        .map(item => ({
+          id: item.id,
+          name: item.name,
+          description: item.description,
+          price: item.price,
+          imageUrl: item.image_url,
+          isAvailable: item.availability_flag,
+          allergens: (item.allergens || []).map(a => a.allergen?.name).filter(Boolean),
+          attributes: item.attributes || {}
+        }))
+    }));
+    
+    res.json({
+      success: true,
+      data: {
+        restaurant: {
+          id: restaurant.id,
+          name: restaurant.name,
+          cuisine: restaurant.cuisine,
+          phone: restaurant.phone,
+          address: restaurant.address
+        },
+        categories: formattedCategories
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching public menu:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Public menu endpoint with restaurantId in path (alternative format for backward compatibility)
 app.get('/api/public/menu/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
