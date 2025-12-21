@@ -1408,6 +1408,72 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Attribute validation helper function for structured attributes
+const validateAttributes = (attributes) => {
+  if (!attributes || typeof attributes !== 'object') return null;
+  
+  const validated = {};
+  
+  // Nutrition data (numbers >= 0)
+  const nutritionFields = ['protein', 'carbs', 'fats', 'fiber', 'sugar', 'sodium'];
+  nutritionFields.forEach(field => {
+    if (attributes[field] !== undefined) {
+      const value = parseFloat(attributes[field]);
+      if (!isNaN(value) && value >= 0) {
+        validated[field] = value;
+      }
+    }
+  });
+  
+  // Boolean nutrition flags
+  if (attributes.glutenFree !== undefined) validated.glutenFree = Boolean(attributes.glutenFree);
+  if (attributes.dairyFree !== undefined) validated.dairyFree = Boolean(attributes.dairyFree);
+  
+  // Ingredients array
+  if (attributes.ingredients && Array.isArray(attributes.ingredients)) {
+    validated.ingredients = attributes.ingredients.filter(i => typeof i === 'string');
+  }
+  
+  // Sourcing object
+  if (attributes.sourcing && typeof attributes.sourcing === 'object') {
+    const sourcing = {};
+    if (attributes.sourcing.origin && typeof attributes.sourcing.origin === 'string') {
+      sourcing.origin = attributes.sourcing.origin;
+    }
+    if (['Local', 'Organic', 'Fair Trade', 'Imported'].includes(attributes.sourcing.type)) {
+      sourcing.type = attributes.sourcing.type;
+    }
+    if (Object.keys(sourcing).length > 0) validated.sourcing = sourcing;
+  }
+  
+  // Sustainability array
+  if (attributes.sustainability && Array.isArray(attributes.sustainability)) {
+    validated.sustainability = attributes.sustainability.filter(s => typeof s === 'string');
+  }
+  
+  // Recipe object
+  if (attributes.recipe && typeof attributes.recipe === 'object') {
+    const recipe = {};
+    if (attributes.recipe.steps && Array.isArray(attributes.recipe.steps)) {
+      recipe.steps = attributes.recipe.steps.filter(s => typeof s === 'string');
+    }
+    if (attributes.recipe.ingredients && Array.isArray(attributes.recipe.ingredients)) {
+      recipe.ingredients = attributes.recipe.ingredients.filter(i => typeof i === 'string');
+    }
+    if (attributes.recipe.chefNotes && typeof attributes.recipe.chefNotes === 'string') {
+      recipe.chefNotes = attributes.recipe.chefNotes;
+    }
+    if (Object.keys(recipe).length > 0) validated.recipe = recipe;
+  }
+  
+  // Sensory type
+  if (['hot', 'cold', 'crispy', 'smooth', 'spicy'].includes(attributes.sensoryType)) {
+    validated.sensoryType = attributes.sensoryType;
+  }
+  
+  return Object.keys(validated).length > 0 ? validated : null;
+};
+
 // Menu items endpoints handler
 const handleGetMenuItems = async (req, res) => {
   try {
@@ -1497,7 +1563,7 @@ app.post('/api/menu-items', authenticateToken, async (req, res) => {
       image_orientation: imageOrientation || '1:1',
       available_time: availableTime,
       available_date: availableDate,
-      attributes: attributes || {},
+      attributes: validateAttributes(attributes) || null,
       tenant_id: tenantId || 'tenant-123'
     };
     
@@ -1564,15 +1630,18 @@ app.put('/api/menu-items/:id', authenticateToken, async (req, res) => {
       if (req.body.attributes === null || (typeof req.body.attributes === 'object' && Object.keys(req.body.attributes).length === 0)) {
         updateData.attributes = null;
       } else if (typeof req.body.attributes === 'object') {
-        updateData.attributes = req.body.attributes;
-      } else {
-        // If it's a string (comma-separated), parse it
+        // Validate structured attributes
+        updateData.attributes = validateAttributes(req.body.attributes);
+      } else if (typeof req.body.attributes === 'string') {
+        // If it's a string (comma-separated), parse it (backward compatibility)
         const attributeNames = String(req.body.attributes).split(',').map(a => a.trim()).filter(Boolean);
         const attributesObj = {};
         attributeNames.forEach(attrName => {
           attributesObj[attrName] = true;
         });
         updateData.attributes = Object.keys(attributesObj).length > 0 ? attributesObj : null;
+      } else {
+        updateData.attributes = null;
       }
     }
     
@@ -1869,6 +1938,494 @@ app.post('/api/public/orders', async (req, res) => {
     });
   } catch (err) {
     console.error('Error creating order:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
+// ============================================
+// SERVICE REQUESTS ENDPOINTS
+// ============================================
+
+// POST /api/service-requests - Create service request (public, for tablet app)
+app.post('/api/service-requests', async (req, res) => {
+  try {
+    const { tableNumber, requestType, message, restaurantId } = req.body;
+    
+    // Validation
+    if (!tableNumber || typeof tableNumber !== 'number' || tableNumber <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'tableNumber is required and must be a positive integer'
+      });
+    }
+    
+    const allowedTypes = ['waiter', 'water', 'bill', 'assistance', 'other'];
+    if (!requestType || !allowedTypes.includes(requestType)) {
+      return res.status(400).json({
+        success: false,
+        message: `requestType is required and must be one of: ${allowedTypes.join(', ')}`
+      });
+    }
+    
+    if (requestType === 'other' && (!message || message.trim().length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'message is required when requestType is "other"'
+      });
+    }
+    
+    // Validate restaurantId if provided
+    let validRestaurantId = null;
+    if (restaurantId) {
+      // Check if it's a valid UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(restaurantId)) {
+        // If not a UUID, try to look it up as tenant_id
+        const { data: property } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('tenant_id', restaurantId)
+          .single();
+        
+        if (!property) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid restaurantId'
+          });
+        }
+        
+        // Get restaurant by property_id
+        const { data: restaurant } = await supabase
+          .from('restaurants')
+          .select('id')
+          .eq('property_id', property.id)
+          .limit(1)
+          .single();
+        
+        if (restaurant) {
+          validRestaurantId = restaurant.id;
+        }
+      } else {
+        // Validate restaurant exists
+        const { data: restaurant } = await supabase
+          .from('restaurants')
+          .select('id')
+          .eq('id', restaurantId)
+          .single();
+        
+        if (!restaurant) {
+          return res.status(400).json({
+            success: false,
+            message: 'Restaurant not found'
+          });
+        }
+        
+        validRestaurantId = restaurantId;
+      }
+    }
+    
+    // Create service request
+    const requestData = {
+      restaurant_id: validRestaurantId,
+      table_number: tableNumber,
+      request_type: requestType,
+      message: message || null,
+      status: 'pending'
+    };
+    
+    const { data: serviceRequest, error } = await supabase
+      .from('service_requests')
+      .insert(requestData)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Supabase error creating service request:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create service request',
+        error: error.message
+      });
+    }
+    
+    // Emit WebSocket event for real-time updates
+    if (io) {
+      io.emit('service_request_created', {
+        type: 'service_request_created',
+        data: {
+          requestId: serviceRequest.id,
+          restaurantId: serviceRequest.restaurant_id,
+          tableNumber: serviceRequest.table_number,
+          requestType: serviceRequest.request_type,
+          status: serviceRequest.status,
+          timestamp: serviceRequest.created_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = transformObject(serviceRequest);
+    
+    res.status(201).json({
+      success: true,
+      data: transformedData,
+      message: 'Service request created successfully'
+    });
+  } catch (err) {
+    console.error('Error creating service request:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
+// POST /api/public/service-requests - Alternative public endpoint (same as /api/service-requests)
+app.post('/api/public/service-requests', async (req, res) => {
+  try {
+    const { tableNumber, requestType, message, restaurantId } = req.body;
+    
+    // Validation
+    if (!tableNumber || typeof tableNumber !== 'number' || tableNumber <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'tableNumber is required and must be a positive integer'
+      });
+    }
+    
+    const allowedTypes = ['waiter', 'water', 'bill', 'assistance', 'other'];
+    if (!requestType || !allowedTypes.includes(requestType)) {
+      return res.status(400).json({
+        success: false,
+        message: `requestType is required and must be one of: ${allowedTypes.join(', ')}`
+      });
+    }
+    
+    if (requestType === 'other' && (!message || message.trim().length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'message is required when requestType is "other"'
+      });
+    }
+    
+    // Validate restaurantId if provided
+    let validRestaurantId = null;
+    if (restaurantId) {
+      // Check if it's a valid UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(restaurantId)) {
+        // If not a UUID, try to look it up as tenant_id
+        const { data: property } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('tenant_id', restaurantId)
+          .single();
+        
+        if (!property) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid restaurantId'
+          });
+        }
+        
+        // Get restaurant by property_id
+        const { data: restaurant } = await supabase
+          .from('restaurants')
+          .select('id')
+          .eq('property_id', property.id)
+          .limit(1)
+          .single();
+        
+        if (restaurant) {
+          validRestaurantId = restaurant.id;
+        }
+      } else {
+        // Validate restaurant exists
+        const { data: restaurant } = await supabase
+          .from('restaurants')
+          .select('id')
+          .eq('id', restaurantId)
+          .single();
+        
+        if (!restaurant) {
+          return res.status(400).json({
+            success: false,
+            message: 'Restaurant not found'
+          });
+        }
+        
+        validRestaurantId = restaurantId;
+      }
+    }
+    
+    // Create service request
+    const requestData = {
+      restaurant_id: validRestaurantId,
+      table_number: tableNumber,
+      request_type: requestType,
+      message: message || null,
+      status: 'pending'
+    };
+    
+    const { data: serviceRequest, error } = await supabase
+      .from('service_requests')
+      .insert(requestData)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Supabase error creating service request:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create service request',
+        error: error.message
+      });
+    }
+    
+    // Emit WebSocket event for real-time updates
+    if (io) {
+      io.emit('service_request_created', {
+        type: 'service_request_created',
+        data: {
+          requestId: serviceRequest.id,
+          restaurantId: serviceRequest.restaurant_id,
+          tableNumber: serviceRequest.table_number,
+          requestType: serviceRequest.request_type,
+          status: serviceRequest.status,
+          timestamp: serviceRequest.created_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = transformObject(serviceRequest);
+    
+    res.status(201).json({
+      success: true,
+      data: transformedData,
+      message: 'Service request created successfully'
+    });
+  } catch (err) {
+    console.error('Error creating service request:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
+// GET /api/service-requests - Get service requests (authenticated, for staff)
+app.get('/api/service-requests', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId, status, tableNumber } = req.query;
+    
+    let query = supabase
+      .from('service_requests')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    // Apply filters
+    if (restaurantId) {
+      // Handle both UUID and tenant_id
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(restaurantId)) {
+        query = query.eq('restaurant_id', restaurantId);
+      } else {
+        // Look up property by tenant_id, then get restaurants
+        const { data: property } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('tenant_id', restaurantId)
+          .single();
+        
+        if (property) {
+          const { data: restaurants } = await supabase
+            .from('restaurants')
+            .select('id')
+            .eq('property_id', property.id);
+          
+          if (restaurants && restaurants.length > 0) {
+            const restaurantIds = restaurants.map(r => r.id);
+            query = query.in('restaurant_id', restaurantIds);
+          } else {
+            // No restaurants found, return empty array
+            return res.json({
+              success: true,
+              data: []
+            });
+          }
+        } else {
+          // Property not found, return empty array
+          return res.json({
+            success: true,
+            data: []
+          });
+        }
+      }
+    }
+    
+    if (status) {
+      const allowedStatuses = ['pending', 'acknowledged', 'completed'];
+      if (allowedStatuses.includes(status)) {
+        query = query.eq('status', status);
+      }
+    }
+    
+    if (tableNumber) {
+      const tableNum = parseInt(tableNumber);
+      if (!isNaN(tableNum)) {
+        query = query.eq('table_number', tableNum);
+      }
+    }
+    
+    const { data: serviceRequests, error } = await query;
+    
+    if (error) {
+      console.error('Supabase error fetching service requests:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch service requests',
+        error: error.message
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = (serviceRequests || []).map(transformObject);
+    
+    res.json({
+      success: true,
+      data: transformedData
+    });
+  } catch (err) {
+    console.error('Error fetching service requests:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
+// PATCH /api/service-requests/:id/acknowledge - Acknowledge service request
+app.patch('/api/service-requests/:id/acknowledge', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id || req.user?.user_id; // Get current user ID from token
+    
+    // Update service request
+    const updateData = {
+      status: 'acknowledged',
+      acknowledged_at: new Date().toISOString(),
+      staff_member_id: userId || null
+    };
+    
+    const { data: serviceRequest, error } = await supabase
+      .from('service_requests')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error || !serviceRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Service request not found'
+      });
+    }
+    
+    // Emit WebSocket event
+    if (io) {
+      io.emit('service_request_acknowledged', {
+        type: 'service_request_acknowledged',
+        data: {
+          requestId: serviceRequest.id,
+          restaurantId: serviceRequest.restaurant_id,
+          tableNumber: serviceRequest.table_number,
+          requestType: serviceRequest.request_type,
+          status: serviceRequest.status,
+          timestamp: serviceRequest.acknowledged_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = transformObject(serviceRequest);
+    
+    res.json({
+      success: true,
+      data: transformedData,
+      message: 'Service request acknowledged'
+    });
+  } catch (err) {
+    console.error('Error acknowledging service request:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
+// PATCH /api/service-requests/:id/complete - Complete service request
+app.patch('/api/service-requests/:id/complete', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Update service request
+    const updateData = {
+      status: 'completed',
+      completed_at: new Date().toISOString()
+    };
+    
+    const { data: serviceRequest, error } = await supabase
+      .from('service_requests')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error || !serviceRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Service request not found'
+      });
+    }
+    
+    // Emit WebSocket event
+    if (io) {
+      io.emit('service_request_completed', {
+        type: 'service_request_completed',
+        data: {
+          requestId: serviceRequest.id,
+          restaurantId: serviceRequest.restaurant_id,
+          tableNumber: serviceRequest.table_number,
+          requestType: serviceRequest.request_type,
+          status: serviceRequest.status,
+          timestamp: serviceRequest.completed_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = transformObject(serviceRequest);
+    
+    res.json({
+      success: true,
+      data: transformedData,
+      message: 'Service request completed'
+    });
+  } catch (err) {
+    console.error('Error completing service request:', err);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -2758,18 +3315,25 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           }
         }
 
-        // Parse attributes from attributeList string (comma-separated)
-        let attributes = {};
-        if (item.attributeList && typeof item.attributeList === 'string') {
-          // Parse comma-separated attribute list
-          const attributeNames = item.attributeList.split(',').map(a => a.trim()).filter(Boolean);
-          // Convert to JSONB object format: { "attributeName": true }
-          attributeNames.forEach(attrName => {
-            attributes[attrName] = true; // Set as boolean true for tag-style attributes
-          });
-        } else if (item.attributeList && typeof item.attributeList === 'object') {
-          // If already an object, use it directly
-          attributes = item.attributeList;
+        // Parse attributes - support both structured format and comma-separated string
+        let attributes = null;
+        if (item.attributes && typeof item.attributes === 'object') {
+          // Structured attributes format (nutrition, ingredients, sourcing, recipe, sensory)
+          attributes = validateAttributes(item.attributes);
+        } else if (item.attributeList) {
+          // Backward compatibility: comma-separated string format
+          if (typeof item.attributeList === 'string') {
+            const attributeNames = item.attributeList.split(',').map(a => a.trim()).filter(Boolean);
+            if (attributeNames.length > 0) {
+              attributes = {};
+              attributeNames.forEach(attrName => {
+                attributes[attrName] = true; // Set as boolean true for tag-style attributes
+              });
+            }
+          } else if (typeof item.attributeList === 'object') {
+            // If attributeList is an object, validate it as structured attributes
+            attributes = validateAttributes(item.attributeList);
+          }
         }
 
         const itemData = {
@@ -2785,7 +3349,7 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           currency: 'INR',
           tenant_id: 'tenant-123',
           bogo: false,
-          attributes: Object.keys(attributes).length > 0 ? attributes : null
+          attributes: attributes
         };
 
         // Store item data with modifier groups for batch processing

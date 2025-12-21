@@ -322,3 +322,27 @@ export interface GenerateTokenRequest {
     propertyId?: string;
     expiresInDays?: number;
 }
+
+// --- Service Request Types ---
+export type ServiceRequestType = 'waiter' | 'water' | 'bill' | 'assistance' | 'other';
+export type ServiceRequestStatus = 'pending' | 'acknowledged' | 'completed';
+
+export interface ServiceRequest {
+    id: string;
+    restaurantId: string;
+    tableNumber: number;
+    requestType: ServiceRequestType;
+    message?: string | null;
+    status: ServiceRequestStatus;
+    createdAt: string;
+    acknowledgedAt?: string | null;
+    completedAt?: string | null;
+    staffMemberId?: string | null;
+}
+
+export interface CreateServiceRequestRequest {
+    tableNumber: number;
+    requestType: ServiceRequestType;
+    message?: string;
+    restaurantId?: string;
+}
