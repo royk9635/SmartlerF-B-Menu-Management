@@ -1630,6 +1630,103 @@ app.get('/api/public/menu/:restaurantId', async (req, res) => {
   }
 });
 
+// Public order creation endpoint (no authentication required)
+app.post('/api/public/orders', async (req, res) => {
+  try {
+    const { restaurantId, tableNumber, items, customerName, customerPhone, customerEmail, notes } = req.body;
+    
+    // Validate required fields
+    if (!restaurantId || !items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: restaurantId and items are required'
+      });
+    }
+    
+    // Calculate total amount from items
+    let totalAmount = 0;
+    const processedItems = items.map(item => {
+      // Calculate item total (base price * quantity)
+      const itemBaseTotal = (item.price || 0) * (item.quantity || 1);
+      
+      // Calculate modifiers total if present
+      let modifiersTotal = 0;
+      if (item.modifiers && Array.isArray(item.modifiers)) {
+        modifiersTotal = item.modifiers.reduce((sum, mod) => sum + (mod.price || 0), 0);
+      }
+      
+      const itemTotal = itemBaseTotal + modifiersTotal;
+      totalAmount += itemTotal;
+      
+      // Return processed item with all necessary data
+      return {
+        menuItemId: item.menuItemId,
+        name: item.name || 'Unknown Item',
+        quantity: item.quantity || 1,
+        price: item.price || 0,
+        notes: item.notes || null,
+        modifiers: item.modifiers || []
+      };
+    });
+    
+    // Prepare order data for database
+    const orderData = {
+      restaurant_id: restaurantId,
+      table_number: tableNumber || null,
+      items: processedItems,
+      total_amount: parseFloat(totalAmount.toFixed(2)),
+      status: 'New',
+      placed_at: new Date().toISOString()
+    };
+    
+    // Save order to database
+    const { data: order, error } = await supabase
+      .from('live_orders')
+      .insert(orderData)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Supabase error creating order:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create order',
+        error: error.message
+      });
+    }
+    
+    // Emit WebSocket event for real-time updates
+    if (io) {
+      io.emit('order_created', {
+        type: 'order_created',
+        data: {
+          orderId: order.id,
+          restaurantId: order.restaurant_id,
+          status: order.status,
+          totalAmount: order.total_amount
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase for response
+    const transformedData = transformObject(order);
+    
+    res.status(201).json({
+      success: true,
+      data: transformedData,
+      message: 'Order created successfully'
+    });
+  } catch (err) {
+    console.error('Error creating order:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: err.message
+    });
+  }
+});
+
 // Orders endpoints
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
