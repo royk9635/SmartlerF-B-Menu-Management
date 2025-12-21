@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { LiveOrder, OrderStatus, Restaurant, Property, User, MenuItem, UserRole } from '../types';
 import * as api from '../services/supabaseService';
+import { ordersApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
 import OrderKanbanBoard from './OrderKanbanBoard';
 
@@ -28,7 +29,8 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ showToast, currentUser }) => {
 
     const fetchOrders = useCallback(async () => {
         try {
-            const newOrders = await api.getLiveOrders();
+            // Use the real API endpoint instead of mock data
+            const newOrders = await ordersApi.getLiveOrders(selectedRestaurantId || undefined);
             setOrders(prevOrders => {
                 const newOrderIds = new Set(newOrders.map(o => o.id));
                 const prevOrderIds = new Set(prevOrders.map(o => o.id));
@@ -41,11 +43,12 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ showToast, currentUser }) => {
             });
             setError(null);
         } catch (err) {
+            console.error('Error fetching orders:', err);
             setError(err instanceof Error ? err.message : 'Failed to fetch orders.');
         } finally {
             setLoading(false);
         }
-    }, [isSoundEnabled, notificationSound]);
+    }, [isSoundEnabled, notificationSound, selectedRestaurantId]);
 
     useEffect(() => {
         // Fetch initial data for filters and maps
@@ -76,10 +79,12 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ showToast, currentUser }) => {
 
     const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
         try {
-            const updatedOrder = await api.updateOrderStatus(orderId, newStatus);
+            // Use the real API endpoint instead of mock data
+            const updatedOrder = await ordersApi.updateOrderStatus(orderId, newStatus);
             setOrders(prevOrders => prevOrders.map(o => o.id === orderId ? updatedOrder : o));
             showToast(`Order ${orderId.slice(-6)} moved to ${newStatus}`, 'success');
         } catch (err) {
+            console.error('Error updating order status:', err);
             showToast(err instanceof Error ? err.message : 'Failed to update order status', 'error');
         }
     };

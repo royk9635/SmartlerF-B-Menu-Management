@@ -290,7 +290,7 @@ export interface LiveOrder {
     totalAmount: number;
     placedAt: string; // ISO string
     restaurantId: string;
-    tableNumber: number;
+    tableNumber: number | null;
     status: OrderStatus;
 }
 
