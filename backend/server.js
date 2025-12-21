@@ -120,11 +120,18 @@ app.use(cors({
       return callback(null, true);
     }
     
-    // In production, check against allowed origins
+    // In production on Vercel, allow same-origin requests (frontend and backend on same domain)
+    // Vercel deployments use pattern: https://project-name-*.vercel.app
+    if (isVercel && origin.includes('vercel.app')) {
+      return callback(null, true);
+    }
+    
+    // Check against allowed origins
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       console.warn(`⚠️  CORS blocked origin: ${origin}`);
+      console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
       callback(new Error('Not allowed by CORS policy'));
     }
   },
