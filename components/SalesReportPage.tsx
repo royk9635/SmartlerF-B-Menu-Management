@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Sale, MenuItem, Restaurant, User, UserRole } from '../types';
 import * as api from '../services/supabaseService';
+import { analyticsApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
 import StatCard from './StatCard';
 import MonthYearPicker from './MonthYearPicker';
@@ -50,9 +51,11 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
         try {
             const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
             const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-            const sales = await api.getSales(startOfMonth.toISOString(), endOfMonth.toISOString());
+            // Use the real API endpoint instead of mock data
+            const sales = await analyticsApi.getSales(startOfMonth.toISOString(), endOfMonth.toISOString());
             setAllMonthlySales(sales);
         } catch (error) {
+            console.error('Error fetching sales:', error);
             showToast('Failed to load sales data.', 'error');
         } finally {
             setLoading(false);
@@ -239,7 +242,7 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
                             <div className="font-semibold text-slate-800">{day}</div>
                             {dayData && (
                                 <div className="mt-auto text-right text-sm font-bold text-emerald-600">
-                                    ${dayData.total.toFixed(2)}
+                                    ₹{dayData.total.toFixed(2)}
                                 </div>
                             )}
                         </div>
@@ -299,7 +302,7 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
                                     <tr key={menuItemId} className="hover:bg-slate-50">
                                         <td className="py-3 px-4 font-medium">{menuItemMap.get(menuItemId)?.name || 'Unknown Item'}</td>
                                         <td className="py-3 px-4 text-center">{data.quantity}</td>
-                                        <td className="py-3 px-4 text-right font-mono">${data.total.toFixed(2)}</td>
+                                        <td className="py-3 px-4 text-right font-mono">₹{data.total.toFixed(2)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -375,7 +378,7 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
                                 <td className="py-3 px-4 text-center">{sale.tableNumber}</td>
                                 <td className="py-3 px-4">{new Date(sale.saleDate).toLocaleString()}</td>
                                 <td className="py-3 px-4 text-center">{sale.items.reduce((sum, item) => sum + item.quantity, 0)}</td>
-                                <td className="py-3 px-4 text-right font-mono">${sale.totalAmount.toFixed(2)}</td>
+                                <td className="py-3 px-4 text-right font-mono">₹{sale.totalAmount.toFixed(2)}</td>
                                 <td className="py-3 px-4 text-center">
                                     <button onClick={() => handleOpenBillModal(sale)} className="text-sky-500 hover:text-sky-700 p-2 rounded-full hover:bg-sky-100 transition" title="View Bill">
                                         <InfoIcon className="h-5 w-5"/>
@@ -442,7 +445,7 @@ const SalesReportPage: React.FC<SalesReportPageProps> = ({ showToast, currentUse
              </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard title="Total Revenue" value={`$${monthlyStats.totalRevenue.toFixed(2)}`} />
+                <StatCard title="Total Revenue" value={`₹${monthlyStats.totalRevenue.toFixed(2)}`} />
                 <StatCard title="Total Items Sold" value={monthlyStats.totalItemsSold.toLocaleString()} />
                 <StatCard title="Number of Orders" value={monthlyStats.totalOrders.toLocaleString()} />
                 <StatCard title="Best-Selling Item" value={monthlyStats.bestSellingItem} />

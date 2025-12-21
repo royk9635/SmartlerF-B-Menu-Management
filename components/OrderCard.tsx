@@ -73,7 +73,7 @@ const OrderCard: React.FC<OrderCardProps> = ({ order, menuItemMap, onUpdateStatu
                         return (
                             <li key={index} className="flex justify-between">
                                 <span className="font-medium text-slate-700">{item.quantity} x {menuItem?.name || 'Unknown Item'}</span>
-                                <span className="font-mono text-slate-600">${(item.quantity * item.price).toFixed(2)}</span>
+                                <span className="font-mono text-slate-600">₹{(item.quantity * item.price).toFixed(2)}</span>
                             </li>
                         );
                     })}

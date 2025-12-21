@@ -1864,6 +1864,33 @@ app.patch('/api/orders/:id/status', authenticateToken, async (req, res) => {
       });
     }
     
+    // If order is completed, create a sale record for analytics
+    if (status === 'Completed') {
+      try {
+        const saleData = {
+          restaurant_id: order.restaurant_id,
+          table_number: order.table_number,
+          total_amount: order.total_amount,
+          sale_date: order.placed_at || new Date().toISOString(),
+          items: order.items
+        };
+        
+        const { error: saleError } = await supabase
+          .from('sales')
+          .insert(saleData);
+        
+        if (saleError) {
+          console.error('Error creating sale record:', saleError);
+          // Don't fail the request if sale creation fails, just log it
+        } else {
+          console.log(`✅ Sale record created for completed order ${id}`);
+        }
+      } catch (saleErr) {
+        console.error('Error creating sale record:', saleErr);
+        // Don't fail the request if sale creation fails
+      }
+    }
+    
     // Emit WebSocket event
     io.emit('order_updated', {
       type: 'order_updated',
@@ -1917,6 +1944,56 @@ app.get('/api/attributes', authenticateToken, async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching attributes:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Sales endpoints
+app.get('/api/sales', authenticateToken, async (req, res) => {
+  try {
+    const { startDate, endDate, restaurantId } = req.query;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'startDate and endDate query parameters are required'
+      });
+    }
+    
+    let query = supabase
+      .from('sales')
+      .select('*')
+      .gte('sale_date', startDate)
+      .lte('sale_date', endDate)
+      .order('sale_date', { ascending: false });
+    
+    if (restaurantId) {
+      query = query.eq('restaurant_id', restaurantId);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch sales',
+        error: error.message
+      });
+    }
+    
+    // Transform snake_case to camelCase
+    const transformedData = transformObject(data || []);
+    
+    res.json({
+      success: true,
+      data: transformedData
+    });
+  } catch (err) {
+    console.error('Error fetching sales:', err);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
