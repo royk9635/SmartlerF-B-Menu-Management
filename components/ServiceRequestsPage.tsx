@@ -142,14 +142,20 @@ const ServiceRequestsPage: React.FC<ServiceRequestsPageProps> = ({ showToast, cu
         let requestsToFilter = [...requests];
         
         if (selectedRestaurantId) {
+            // Filter by specific restaurant
             requestsToFilter = requestsToFilter.filter(r => r.restaurantId === selectedRestaurantId);
         } else if (selectedPropertyId) {
+            // Filter by property - include requests with null restaurantId for SuperAdmin
             const restaurantIds = new Set(restaurantsForFilter.map(r => r.id));
-            requestsToFilter = requestsToFilter.filter(r => restaurantIds.has(r.restaurantId));
+            requestsToFilter = requestsToFilter.filter(r => 
+                restaurantIds.has(r.restaurantId) || (isSuperAdmin && !r.restaurantId)
+            );
         } else if (!isSuperAdmin) {
+            // For non-SuperAdmin, filter by user's property restaurants
             const restaurantIds = new Set(allRestaurants.filter(r => r.propertyId === currentUser.propertyId).map(r => r.id));
             requestsToFilter = requestsToFilter.filter(r => restaurantIds.has(r.restaurantId));
         }
+        // For SuperAdmin with no filters, show all requests (including null restaurantId)
         
         return requestsToFilter;
     }, [requests, selectedPropertyId, selectedRestaurantId, restaurantsForFilter, allRestaurants, currentUser.propertyId, isSuperAdmin]);

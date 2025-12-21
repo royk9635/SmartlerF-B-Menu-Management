@@ -2373,6 +2373,7 @@ app.get('/api/service-requests', authenticateToken, async (req, res) => {
         }
       }
     }
+    // If no restaurantId filter is provided, return ALL requests (including those with null restaurant_id)
     
     if (status) {
       const allowedStatuses = ['pending', 'acknowledged', 'completed'];
