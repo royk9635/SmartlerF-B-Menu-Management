@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import * as api from '../services/supabaseService';
+import { authApi } from '../services/apiService';
 import { User } from '../types';
 import { LoadingSpinnerIcon } from './Icons';
 
@@ -20,7 +20,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onSwitchToSignUp,
         setIsLoading(true);
         setError(null);
         try {
-            const user = await api.login(email, password);
+            // Use authApi.login() which calls the backend API and stores the token
+            const { user, token } = await authApi.login(email, password);
+            // Token is automatically stored by httpClient.setAuthToken() in authApi.login()
             onLoginSuccess(user);
         } catch (err: any) {
             // Handle ApiError objects properly

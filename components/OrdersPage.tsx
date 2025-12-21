@@ -42,13 +42,22 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ showToast, currentUser }) => {
                 return newOrders;
             });
             setError(null);
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error fetching orders:', err);
-            setError(err instanceof Error ? err.message : 'Failed to fetch orders.');
+            
+            // Handle authentication errors specifically
+            if (err?.status === 401) {
+                const errorMsg = 'Authentication required. Please log in again.';
+                setError(errorMsg);
+                // Optionally redirect to login or show a message
+                showToast(errorMsg, 'error');
+            } else {
+                setError(err instanceof Error ? err.message : 'Failed to fetch orders.');
+            }
         } finally {
             setLoading(false);
         }
-    }, [isSoundEnabled, notificationSound, selectedRestaurantId]);
+    }, [isSoundEnabled, notificationSound, selectedRestaurantId, showToast]);
 
     useEffect(() => {
         // Fetch initial data for filters and maps
