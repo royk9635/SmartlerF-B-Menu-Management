@@ -2743,6 +2743,20 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           }
         }
 
+        // Parse attributes from attributeList string (comma-separated)
+        let attributes = {};
+        if (item.attributeList && typeof item.attributeList === 'string') {
+          // Parse comma-separated attribute list
+          const attributeNames = item.attributeList.split(',').map(a => a.trim()).filter(Boolean);
+          // Convert to JSONB object format: { "attributeName": true }
+          attributeNames.forEach(attrName => {
+            attributes[attrName] = true; // Set as boolean true for tag-style attributes
+          });
+        } else if (item.attributeList && typeof item.attributeList === 'object') {
+          // If already an object, use it directly
+          attributes = item.attributeList;
+        }
+
         const itemData = {
           name: item.itemName,
           item_code: item.itemCode,
@@ -2755,7 +2769,8 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
           sold_out: false,
           currency: 'INR',
           tenant_id: 'tenant-123',
-          bogo: false
+          bogo: false,
+          attributes: Object.keys(attributes).length > 0 ? attributes : null
         };
 
         // Store item data with modifier groups for batch processing
