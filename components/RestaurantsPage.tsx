@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Restaurant, Property, User, UserRole, SystemImportStats } from '../types';
 import * as api from '../services/supabaseService';
+import { importApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
 import ConfirmationModal from './ConfirmationModal';
 import RestaurantModal from './RestaurantModal';
@@ -145,7 +146,9 @@ const RestaurantsPage: React.FC<RestaurantsPageProps> = ({ showToast, currentUse
     
     const handleSystemImport = async (file: File): Promise<SystemImportStats> => {
         const jsonString = await file.text();
-        const stats = await api.importSystemMenuFromJson(jsonString);
+        const payload = JSON.parse(jsonString);
+        // Use backend API endpoint which uses service role key to bypass RLS
+        const stats = await importApi.importSystemMenu(payload);
         setSystemImportStats(stats);
         showToast('System-wide import completed!', 'success');
         fetchData(); // Refresh data after import

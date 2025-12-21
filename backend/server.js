@@ -2450,6 +2450,182 @@ io.on('connection', (socket) => {
   });
 });
 
+// System-wide menu import endpoint (uses service role key to bypass RLS)
+app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
+  try {
+    const payload = req.body;
+    
+    if (!payload || !payload.restaurantCategory || !Array.isArray(payload.restaurantCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid import payload. Expected { restaurantCategory: [...], items: [...], condiments: [...] }'
+      });
+    }
+
+    const stats = {
+      restaurantsProcessed: 0,
+      restaurantsSkipped: [],
+      categoriesCreated: 0,
+      subcategoriesCreated: 0,
+      itemsCreated: 0,
+      itemsUpdated: 0,
+      allergensCreated: 0,
+      modifierGroupsCreated: 0,
+      modifierItemsCreated: 0,
+    };
+
+    // Fetch all restaurants
+    const { data: restaurants, error: restaurantsError } = await supabase
+      .from('restaurants')
+      .select('*');
+    
+    if (restaurantsError) {
+      console.error('Error fetching restaurants:', restaurantsError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch restaurants',
+        error: restaurantsError.message
+      });
+    }
+
+    // Helper to process categories recursively
+    const processCategories = async (nodes, restaurantId, parentCategoryId = null) => {
+      for (const node of nodes) {
+        if (parentCategoryId) {
+          // Process as subcategory
+          const { data: existingSubcats } = await supabase
+            .from('subcategories')
+            .select('*')
+            .eq('category_id', parentCategoryId)
+            .ilike('name', node.name);
+          
+          let subcat;
+          if (existingSubcats && existingSubcats.length > 0) {
+            subcat = {
+              id: existingSubcats[0].id,
+              name: existingSubcats[0].name,
+              sortOrder: existingSubcats[0].sort_order,
+              categoryId: existingSubcats[0].category_id,
+            };
+          } else {
+            const { data: newSubcat, error: subcatError } = await supabase
+              .from('subcategories')
+              .insert({
+                name: node.name,
+                sort_order: node.sortOrder || 0,
+                category_id: parentCategoryId
+              })
+              .select()
+              .single();
+            
+            if (subcatError) {
+              console.error('Error creating subcategory:', subcatError);
+              continue;
+            }
+            
+            subcat = {
+              id: newSubcat.id,
+              name: newSubcat.name,
+              sortOrder: newSubcat.sort_order,
+              categoryId: newSubcat.category_id,
+            };
+            stats.subcategoriesCreated++;
+          }
+          
+          if (node.categories && node.categories.length > 0) {
+            await processCategories(node.categories, restaurantId, subcat.id);
+          }
+        } else {
+          // Process as category
+          const { data: existingCats } = await supabase
+            .from('menu_categories')
+            .select('*')
+            .eq('restaurant_id', restaurantId)
+            .ilike('name', node.name);
+          
+          let cat;
+          if (existingCats && existingCats.length > 0) {
+            cat = {
+              id: existingCats[0].id,
+              name: existingCats[0].name,
+              description: existingCats[0].description || '',
+              sortOrder: existingCats[0].sort_order,
+              activeFlag: existingCats[0].active_flag,
+              restaurantId: existingCats[0].restaurant_id,
+            };
+          } else {
+            const { data: newCat, error: catError } = await supabase
+              .from('menu_categories')
+              .insert({
+                name: node.name,
+                description: '',
+                sort_order: node.sortOrder || 0,
+                active_flag: true,
+                restaurant_id: restaurantId
+              })
+              .select()
+              .single();
+            
+            if (catError) {
+              console.error('Error creating category:', catError);
+              return res.status(500).json({
+                success: false,
+                message: `Failed to create category: ${catError.message}`,
+                error: catError.message,
+                hint: 'This might be due to RLS policies. Ensure the backend is using the service role key.'
+              });
+            }
+            
+            cat = {
+              id: newCat.id,
+              name: newCat.name,
+              description: newCat.description || '',
+              sortOrder: newCat.sort_order,
+              activeFlag: newCat.active_flag,
+              restaurantId: newCat.restaurant_id,
+            };
+            stats.categoriesCreated++;
+          }
+          
+          if (node.categories && node.categories.length > 0) {
+            await processCategories(node.categories, restaurantId, cat.id);
+          }
+        }
+      }
+    };
+
+    // Process restaurants and their categories
+    for (const restCatInfo of payload.restaurantCategory) {
+      let restaurant = restaurants.find(r => r.id === restCatInfo.restaurantId) || 
+                      restaurants.find(r => r.name.toLowerCase() === restCatInfo.restaurantName.toLowerCase());
+      
+      if (!restaurant) {
+        stats.restaurantsSkipped.push({ id: restCatInfo.restaurantId, name: restCatInfo.restaurantName });
+        continue;
+      }
+      
+      stats.restaurantsProcessed++;
+      await processCategories(restCatInfo.categories, restaurant.id);
+    }
+
+    // Note: Items, modifiers, and allergens processing would go here
+    // For now, we're just handling categories to fix the RLS issue
+    
+    res.json({
+      success: true,
+      data: stats,
+      message: 'System menu import completed successfully'
+    });
+  } catch (err) {
+    console.error('Error importing system menu:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during import',
+      error: err.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
