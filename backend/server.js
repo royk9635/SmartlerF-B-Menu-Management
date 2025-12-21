@@ -100,7 +100,8 @@ const getAllowedOrigins = () => {
       'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost:3000',
-      'http://localhost:5175'
+      'http://localhost:5175',
+      'http://localhost:5000'
     ];
   }
 };
@@ -2608,8 +2609,206 @@ app.post('/api/import/system-menu', authenticateToken, async (req, res) => {
       await processCategories(restCatInfo.categories, restaurant.id);
     }
 
-    // Note: Items, modifiers, and allergens processing would go here
-    // For now, we're just handling categories to fix the RLS issue
+    // Process modifiers (condiments) and items
+    const condimentMap = new Map();
+    if (payload.condiments && Array.isArray(payload.condiments)) {
+      payload.condiments.forEach(c => condimentMap.set(c.condimentCode, c));
+    }
+    const processedModifierGroupsCache = new Map(); // Key: "restaurantId-condimentCode", Value: "modifierGroupId"
+
+    if (payload.items && Array.isArray(payload.items)) {
+      for (const item of payload.items) {
+        let restaurant = restaurants.find(r => r.id === item.restaurantId) || 
+                        restaurants.find(r => r.name.toLowerCase() === item.restaurantName.toLowerCase());
+        
+        if (!restaurant) continue;
+
+        // Find category
+        const { data: categoryData, error: categoryError } = await supabase
+          .from('menu_categories')
+          .select('*')
+          .eq('restaurant_id', restaurant.id)
+          .ilike('name', item.category)
+          .limit(1)
+          .maybeSingle();
+        
+        if (categoryError || !categoryData) {
+          console.warn(`Category not found for item ${item.itemName}: ${item.category}`);
+          continue;
+        }
+
+        // Process and link modifiers for this item
+        const itemModifierGroupIds = [];
+        if (item.condimentCodes) {
+          const codes = item.condimentCodes.split(',').map(c => c.trim()).filter(Boolean);
+          for (const code of codes) {
+            const groupKey = `${restaurant.id}-${code}`;
+
+            if (processedModifierGroupsCache.has(groupKey)) {
+              const groupId = processedModifierGroupsCache.get(groupKey);
+              if (!itemModifierGroupIds.includes(groupId)) {
+                itemModifierGroupIds.push(groupId);
+              }
+              continue;
+            }
+
+            const condiment = condimentMap.get(code);
+            if (condiment) {
+              // Check if modifier group exists
+              const { data: existingGroups } = await supabase
+                .from('modifier_groups')
+                .select('*')
+                .eq('restaurant_id', restaurant.id)
+                .ilike('name', condiment.condimentName)
+                .limit(1);
+
+              let group;
+              if (existingGroups && existingGroups.length > 0) {
+                group = {
+                  id: existingGroups[0].id,
+                  name: existingGroups[0].name,
+                  restaurantId: existingGroups[0].restaurant_id,
+                  minSelection: existingGroups[0].min_selection,
+                  maxSelection: existingGroups[0].max_selection,
+                };
+              } else {
+                // Create new modifier group
+                const { data: newGroup, error: groupError } = await supabase
+                  .from('modifier_groups')
+                  .insert({
+                    name: condiment.condimentName,
+                    restaurant_id: restaurant.id,
+                    min_selection: 0,
+                    max_selection: 1
+                  })
+                  .select()
+                  .single();
+                
+                if (groupError) {
+                  console.error('Error creating modifier group:', groupError);
+                  continue;
+                }
+                
+                group = {
+                  id: newGroup.id,
+                  name: newGroup.name,
+                  restaurantId: newGroup.restaurant_id,
+                  minSelection: newGroup.min_selection,
+                  maxSelection: newGroup.max_selection,
+                };
+                stats.modifierGroupsCreated++;
+
+                // Add modifier items
+                if (condiment.condimentItems && Array.isArray(condiment.condimentItems)) {
+                  for (const condimentItem of condiment.condimentItems) {
+                    const { error: itemError } = await supabase
+                      .from('modifier_items')
+                      .insert({
+                        name: condimentItem.condimentItemName,
+                        price: 0,
+                        modifier_group_id: group.id
+                      });
+                    
+                    if (!itemError) {
+                      stats.modifierItemsCreated++;
+                    } else {
+                      console.error('Error creating modifier item:', itemError);
+                    }
+                  }
+                }
+              }
+
+              if (group) {
+                if (!itemModifierGroupIds.includes(group.id)) {
+                  itemModifierGroupIds.push(group.id);
+                }
+                processedModifierGroupsCache.set(groupKey, group.id);
+              }
+            }
+          }
+        }
+
+        // Check if menu item exists
+        const { data: existingItems } = await supabase
+          .from('menu_items')
+          .select('*')
+          .eq('item_code', item.itemCode)
+          .eq('category_id', categoryData.id)
+          .limit(1);
+
+        const itemData = {
+          name: item.itemName,
+          item_code: item.itemCode,
+          image_url: item.itemImage || null,
+          price: parseFloat(item.itemPrice) || 0,
+          category_id: categoryData.id,
+          description: item.itemDescription || '',
+          sort_order: item.sortOrder || 0,
+          availability_flag: true,
+          sold_out: false,
+          currency: 'INR',
+          tenant_id: 'tenant-123',
+          bogo: false
+        };
+
+        if (existingItems && existingItems.length > 0) {
+          // Update existing item
+          const { error: updateError } = await supabase
+            .from('menu_items')
+            .update(itemData)
+            .eq('id', existingItems[0].id);
+          
+          if (!updateError) {
+            stats.itemsUpdated++;
+            
+            // Update modifier groups for this item
+            // First, remove existing links
+            await supabase
+              .from('menu_item_modifier_groups')
+              .delete()
+              .eq('menu_item_id', existingItems[0].id);
+            
+            // Then add new links
+            if (itemModifierGroupIds.length > 0) {
+              const links = itemModifierGroupIds.map(groupId => ({
+                menu_item_id: existingItems[0].id,
+                modifier_group_id: groupId
+              }));
+              await supabase
+                .from('menu_item_modifier_groups')
+                .insert(links);
+            }
+          } else {
+            console.error('Error updating menu item:', updateError);
+          }
+        } else {
+          // Create new item
+          const { data: newItem, error: insertError } = await supabase
+            .from('menu_items')
+            .insert(itemData)
+            .select()
+            .single();
+          
+          if (insertError) {
+            console.error('Error creating menu item:', insertError);
+            continue;
+          }
+          
+          stats.itemsCreated++;
+          
+          // Link modifier groups to the new item
+          if (itemModifierGroupIds.length > 0) {
+            const links = itemModifierGroupIds.map(groupId => ({
+              menu_item_id: newItem.id,
+              modifier_group_id: groupId
+            }));
+            await supabase
+              .from('menu_item_modifier_groups')
+              .insert(links);
+          }
+        }
+      }
+    }
     
     res.json({
       success: true,
