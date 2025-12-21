@@ -2,7 +2,7 @@ import React from 'react';
 import { AnalyticsIcon, DocumentReportIcon, UsersIcon, AuditLogIcon, TagIcon, WarningIcon, AdjustmentsIcon, BellIcon, KeyIcon } from './Icons';
 import { User, UserRole } from '../types';
 
-export type Page = 'properties' | 'restaurants' | 'categories' | 'menu_items' | 'attributes' | 'allergens' | 'modifiers' | 'analytics' | 'sales_report' | 'user_management' | 'audit_log' | 'orders' | 'api_tokens';
+export type Page = 'properties' | 'restaurants' | 'categories' | 'menu_items' | 'attributes' | 'allergens' | 'modifiers' | 'analytics' | 'sales_report' | 'user_management' | 'audit_log' | 'orders' | 'service_requests' | 'api_tokens';
 
 interface SidebarProps {
     currentPage: Page;
@@ -83,11 +83,18 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, currentU
                             setCurrentPage={setCurrentPage}
                             icon={<BellIcon className={currentPage === 'orders' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
                         />
+                        <NavItem
+                            page="service_requests"
+                            label="Service Requests"
+                            currentPage={currentPage}
+                            setCurrentPage={setCurrentPage}
+                            icon={<BellIcon className={currentPage === 'service_requests' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
+                        />
                         <NavItem 
                             page="analytics" 
                             label="Analytics" 
                             currentPage={currentPage} 
-                            setCurrentPage={setCurrentPage}
+                            setCurrentPage={setCurrentPage} 
                             icon={<AnalyticsIcon className={currentPage === 'analytics' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
                         />
                         <NavItem 

@@ -16,6 +16,7 @@ import AttributesPage from './components/AttributesPage'
 import AllergensPage from './components/AllergensPage'
 import ModifiersPage from './components/ModifiersPage'
 import OrdersPage from './components/OrdersPage'
+import ServiceRequestsPage from './components/ServiceRequestsPage'
 import ApiTokensPage from './components/ApiTokensPage'
 import LoginPage from './components/LoginPage'
 import SignUpPage from './components/SignUpPage'
@@ -116,6 +117,8 @@ const App: React.FC = () => {
                 return <ModifiersPage showToast={showToast} currentUser={currentUser} />
             case 'orders':
                 return <OrdersPage showToast={showToast} currentUser={currentUser} />;
+            case 'service_requests':
+                return <ServiceRequestsPage showToast={showToast} currentUser={currentUser} />;
             case 'analytics':
                 return <AnalyticsPage showToast={showToast} currentUser={currentUser} />
             case 'sales_report':

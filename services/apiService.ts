@@ -4,7 +4,7 @@ import {
   Property, Restaurant, MenuCategory, MenuItem, User, Sale,
   Attribute, Allergen, ModifierGroup, ModifierItem, PublicMenu,
   AuditLog, LiveOrder, OrderStatus, SubCategory, SystemMenuImportPayload, SystemImportStats,
-  ApiToken, GenerateTokenRequest
+  ApiToken, GenerateTokenRequest, ServiceRequest, ServiceRequestStatus
 } from '../types';
 
 // --- Authentication API ---
@@ -385,6 +385,30 @@ export const apiTokensApi = {
         'Authorization': `Bearer ${token}`
       }
     });
+    return response.data;
+  },
+};
+
+// --- Service Requests API ---
+export const serviceRequestsApi = {
+  getAll: async (params?: { restaurantId?: string; status?: ServiceRequestStatus; tableNumber?: number }): Promise<ServiceRequest[]> => {
+    const queryParams = new URLSearchParams();
+    if (params?.restaurantId) queryParams.append('restaurantId', params.restaurantId);
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.tableNumber) queryParams.append('tableNumber', params.tableNumber.toString());
+    
+    const url = `/api/service-requests${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await httpClient.get<ApiResponse<ServiceRequest[]>>(url);
+    return response.data;
+  },
+
+  acknowledge: async (id: string): Promise<ServiceRequest> => {
+    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/api/service-requests/${id}/acknowledge`, {});
+    return response.data;
+  },
+
+  complete: async (id: string): Promise<ServiceRequest> => {
+    const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/api/service-requests/${id}/complete`, {});
     return response.data;
   },
 };
