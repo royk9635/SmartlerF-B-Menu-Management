@@ -2001,6 +2001,89 @@ app.get('/api/sales', authenticateToken, async (req, res) => {
   }
 });
 
+// Analytics endpoint
+app.get('/api/analytics', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId } = req.query;
+    
+    // Get sales data for analytics
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    let salesQuery = supabase
+      .from('sales')
+      .select('*')
+      .gte('sale_date', thirtyDaysAgo.toISOString())
+      .order('sale_date', { ascending: false });
+    
+    if (restaurantId) {
+      salesQuery = salesQuery.eq('restaurant_id', restaurantId);
+    }
+    
+    const { data: sales, error: salesError } = await salesQuery;
+    
+    if (salesError) {
+      console.error('Supabase error fetching sales:', salesError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch sales data',
+        error: salesError.message
+      });
+    }
+    
+    // Calculate analytics
+    const totalRevenue = (sales || []).reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+    const totalOrders = (sales || []).length;
+    const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    
+    // Calculate top items
+    const itemCounts = new Map();
+    (sales || []).forEach(sale => {
+      if (sale.items && Array.isArray(sale.items)) {
+        sale.items.forEach((item) => {
+          const existing = itemCounts.get(item.menuItemId) || { quantity: 0, revenue: 0, name: item.name || 'Unknown' };
+          existing.quantity += item.quantity || 0;
+          existing.revenue += (item.price || 0) * (item.quantity || 0);
+          existing.name = item.name || existing.name;
+          itemCounts.set(item.menuItemId, existing);
+        });
+      }
+    });
+    
+    const topItems = Array.from(itemCounts.entries())
+      .map(([itemId, data]) => ({
+        itemId,
+        name: data.name,
+        quantity: data.quantity,
+        revenue: data.revenue
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+    
+    // Calculate category breakdown
+    const categoryRevenue = new Map();
+    // Note: This would require joining with menu_items to get category info
+    // For now, we'll return basic structure
+    
+    res.json({
+      success: true,
+      data: {
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        totalOrders,
+        averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
+        topItems,
+        categoryBreakdown: [] // Can be enhanced later with category joins
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching analytics:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
 // Allergens endpoints
 app.get('/api/allergens', authenticateToken, async (req, res) => {
   try {

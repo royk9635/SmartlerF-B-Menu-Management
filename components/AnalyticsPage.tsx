@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Property, Restaurant, MenuCategory, MenuItem, SpecialType, User, UserRole } from '../types';
 import * as api from '../services/supabaseService';
+import { propertiesApi, restaurantsApi, categoriesApi, menuItemsApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
 import StatCard from './StatCard';
 import CategoryBarChart from './CategoryBarChart';
@@ -29,11 +30,12 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ showToast, currentUser })
         const fetchAllData = async () => {
             setLoading(true);
             try {
+                // Use backend API endpoints instead of frontend supabaseService
                 const [properties, restaurants, categories, items] = await Promise.all([
-                    api.getProperties('tenant-123'),
-                    api.getAllRestaurants(),
-                    api.getAllCategories(),
-                    api.getAllMenuItems(),
+                    propertiesApi.getAll(),
+                    restaurantsApi.getAll(),
+                    categoriesApi.getAll(),
+                    menuItemsApi.getAll(),
                 ]);
                 setAllProperties(properties);
                 setAllRestaurants(restaurants);
@@ -43,6 +45,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ showToast, currentUser })
                     setSelectedPropertyId(currentUser.propertyId || '');
                 }
             } catch (error) {
+                console.error('Error fetching analytics data:', error);
                 showToast('Failed to load analytics data.', 'error');
             } finally {
                 setLoading(false);

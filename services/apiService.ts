@@ -108,6 +108,15 @@ export const restaurantsApi = {
 
 // --- Categories API ---
 export const categoriesApi = {
+  getAll: async (restaurantId?: string): Promise<MenuCategory[]> => {
+    let url = API_CONFIG.ENDPOINTS.CATEGORIES;
+    if (restaurantId) {
+      url += `?restaurantId=${restaurantId}`;
+    }
+    const response = await httpClient.get<ApiResponse<MenuCategory[]>>(url);
+    return response.data;
+  },
+
   getByRestaurant: async (restaurantId: string): Promise<MenuCategory[]> => {
     const response = await httpClient.get<ApiResponse<MenuCategory[]>>(
       `${API_CONFIG.ENDPOINTS.CATEGORIES}?restaurantId=${restaurantId}`
