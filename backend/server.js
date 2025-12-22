@@ -152,43 +152,10 @@ const io = new Server(server, {
   }
 });
 
-// Periodic cleanup job: Deactivate staff with no active assignments
-async function cleanupInactiveStaff() {
-  try {
-    // Get all active staff
-    const { data: activeStaff } = await supabase
-      .from('staff')
-      .select('id')
-      .eq('is_active', true);
-    
-    if (!activeStaff || activeStaff.length === 0) return;
-    
-    // For each active staff, check if they have active assignments
-    for (const staff of activeStaff) {
-      const { data: assignments } = await supabase
-        .from('staff_assignments')
-        .select('id')
-        .eq('staff_id', staff.id)
-        .eq('is_active', true)
-        .limit(1);
-      
-      // If no active assignments, deactivate staff
-      if (!assignments || assignments.length === 0) {
-        await supabase
-          .from('staff')
-          .update({ is_active: false, updated_at: new Date().toISOString() })
-          .eq('id', staff.id);
-        console.log(`[Cleanup] Deactivated staff ${staff.id} - no active assignments`);
-      }
-    }
-  } catch (error) {
-    console.error('[Cleanup] Error cleaning up inactive staff:', error);
-  }
-}
-
-// Run cleanup every 5 minutes
-setInterval(cleanupInactiveStaff, 5 * 60 * 1000);
-console.log('✅ Periodic staff cleanup job started (runs every 5 minutes)');
+// Note: Periodic cleanup job removed
+// Staff now remain active even when they have no table assignments
+// This ensures staff can always verify their PIN in the tablet app
+// Staff status can only be changed manually by admins in the portal
 
 // Security Headers Middleware
 app.use((req, res, next) => {
@@ -3143,22 +3110,8 @@ app.post('/api/staff/unassign-table', authenticateStaffToken, async (req, res) =
       });
     }
     
-    // Check if this was the staff member's last active assignment
-    const { data: otherAssignments } = await supabase
-      .from('staff_assignments')
-      .select('id')
-      .eq('staff_id', assignment.staff_id)
-      .eq('is_active', true)
-      .limit(1);
-    
-    // If no other active assignments, auto-deactivate staff
-    if (!otherAssignments || otherAssignments.length === 0) {
-      await supabase
-        .from('staff')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq('id', assignment.staff_id);
-      console.log(`[Auto-Deactivate] Staff ${assignment.staff_id} deactivated - no active assignments`);
-    }
+    // Note: Staff remain active even when unassigned from tables
+    // This ensures they can always verify their PIN in the tablet app
     
     // Emit WebSocket event
     if (io) {
