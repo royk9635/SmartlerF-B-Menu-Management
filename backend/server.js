@@ -364,8 +364,9 @@ const authenticateToken = async (req, res, next) => {
   }
 
   // First, try Supabase Auth token (EASIEST - no JWT secret needed!)
+  // Use supabaseAuth (anon key) for validating user tokens
   try {
-    const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
     
     if (!authError && authUser) {
       // Valid Supabase Auth token - get user from users table
@@ -389,7 +390,8 @@ const authenticateToken = async (req, res, next) => {
       }
     } else if (authError) {
       // Log Supabase auth error for debugging (but don't fail yet, try other methods)
-      console.debug(`[Auth] Supabase auth failed: ${authError.message}`);
+      console.warn(`[Auth] Supabase auth failed for ${req.method} ${req.path}: ${authError.message}`);
+      console.warn(`[Auth] Token preview: ${token.substring(0, 20)}...`);
     }
   } catch (supabaseError) {
     // Not a Supabase token, try JWT
