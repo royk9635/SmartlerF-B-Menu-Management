@@ -122,8 +122,9 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
             await fetchData();
             setModalOpen(false);
             setEditingStaff(null);
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        } catch (error: any) {
+            // Extract error message from ApiError or Error object
+            const errorMessage = error?.message || error?.error || 'Unknown error occurred';
             showToast(`Failed to save staff member. ${errorMessage}`, 'error');
         }
     };
@@ -135,8 +136,8 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
                 await staffApi.delete(staff.id);
                 showToast('Staff member deleted successfully!', 'success');
                 await fetchData();
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            } catch (error: any) {
+                const errorMessage = error?.message || error?.error || 'Unknown error occurred';
                 showToast(`Failed to delete staff member. ${errorMessage}`, 'error');
             }
         });
@@ -148,8 +149,8 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
             await staffApi.update(staff.id, { isActive: !staff.isActive });
             showToast(`Staff member ${!staff.isActive ? 'activated' : 'deactivated'} successfully!`, 'success');
             await fetchData();
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        } catch (error: any) {
+            const errorMessage = error?.message || error?.error || 'Unknown error occurred';
             showToast(`Failed to update staff member. ${errorMessage}`, 'error');
         }
     };

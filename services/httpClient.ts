@@ -84,8 +84,10 @@ class HttpClient {
     }
 
     if (!response.ok) {
+      // Backend may return error message in 'message' or 'error' field
+      const errorMessage = data.message || data.error || `HTTP Error: ${response.status}`;
       const error: ApiError = {
-        message: data.message || `HTTP Error: ${response.status}`,
+        message: errorMessage,
         status: response.status,
         errors: data.errors,
       };
