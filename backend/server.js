@@ -2755,12 +2755,28 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
     const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
     pinAttempts.delete(ip);
     
-    // Return staff details (without PIN)
+    // Generate JWT token for staff authentication
+    // Token expires in 24 hours
+    const tokenPayload = {
+      staffId: staff.id,
+      restaurantId: staff.restaurant_id,
+      type: 'staff'
+    };
+    
+    let token = null;
+    if (JWT_SECRET) {
+      token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
+    }
+    
+    // Return staff details (without PIN) and token
     const transformedData = transformObject(staff);
     
     res.json({
       success: true,
-      data: transformedData,
+      data: {
+        ...transformedData,
+        token: token // Include JWT token for subsequent API calls
+      },
       message: 'PIN verified successfully'
     });
   } catch (err) {
