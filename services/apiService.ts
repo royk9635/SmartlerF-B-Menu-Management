@@ -453,4 +453,28 @@ export const staffApi = {
     });
     return response.data;
   },
+
+  // CRUD operations for portal
+  getAll: async (params?: { propertyId?: string; restaurantId?: string }): Promise<Staff[]> => {
+    const queryParams = new URLSearchParams();
+    if (params?.propertyId) queryParams.append('propertyId', params.propertyId);
+    if (params?.restaurantId) queryParams.append('restaurantId', params.restaurantId);
+    const url = `/staff${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await httpClient.get<ApiResponse<Staff[]>>(url);
+    return response.data;
+  },
+
+  create: async (data: { name: string; pin: string; role: Staff['role']; restaurantId: string }): Promise<Omit<Staff, 'pin'>> => {
+    const response = await httpClient.post<ApiResponse<Omit<Staff, 'pin'>>>('/staff', data);
+    return response.data;
+  },
+
+  update: async (id: string, data: Partial<{ name: string; pin: string; role: Staff['role']; isActive: boolean }>): Promise<Omit<Staff, 'pin'>> => {
+    const response = await httpClient.put<ApiResponse<Omit<Staff, 'pin'>>>(`/staff/${id}`, data);
+    return response.data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await httpClient.delete<ApiResponse<void>>(`/staff/${id}`);
+  },
 };

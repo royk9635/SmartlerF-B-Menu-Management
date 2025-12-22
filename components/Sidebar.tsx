@@ -2,7 +2,7 @@ import React from 'react';
 import { AnalyticsIcon, DocumentReportIcon, UsersIcon, AuditLogIcon, TagIcon, WarningIcon, AdjustmentsIcon, BellIcon, KeyIcon } from './Icons';
 import { User, UserRole } from '../types';
 
-export type Page = 'properties' | 'restaurants' | 'categories' | 'menu_items' | 'attributes' | 'allergens' | 'modifiers' | 'analytics' | 'sales_report' | 'user_management' | 'audit_log' | 'orders' | 'service_requests' | 'api_tokens';
+export type Page = 'properties' | 'restaurants' | 'categories' | 'menu_items' | 'attributes' | 'allergens' | 'modifiers' | 'analytics' | 'sales_report' | 'user_management' | 'staff_management' | 'audit_log' | 'orders' | 'service_requests' | 'api_tokens';
 
 interface SidebarProps {
     currentPage: Page;
@@ -105,6 +105,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, currentU
                             icon={<DocumentReportIcon className={currentPage === 'sales_report' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
                         />
                         {(currentUser.role === UserRole.SUPERADMIN || currentUser.role === UserRole.ADMIN) && (
+                            <>
                             <NavItem 
                                 page="user_management" 
                                 label="User Management" 
@@ -112,6 +113,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, currentU
                                 setCurrentPage={setCurrentPage}
                                 icon={<UsersIcon className={currentPage === 'user_management' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
                             />
+                            <NavItem 
+                                page="staff_management" 
+                                label="Staff Management" 
+                                currentPage={currentPage} 
+                                setCurrentPage={setCurrentPage}
+                                icon={<UsersIcon className={currentPage === 'staff_management' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
+                            />
+                            </>
                         )}
                         {currentUser.role === UserRole.SUPERADMIN && (
                             <>

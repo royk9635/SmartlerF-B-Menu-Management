@@ -18,6 +18,7 @@ import ModifiersPage from './components/ModifiersPage'
 import OrdersPage from './components/OrdersPage'
 import ServiceRequestsPage from './components/ServiceRequestsPage'
 import ApiTokensPage from './components/ApiTokensPage'
+import StaffManagementPage from './components/StaffManagementPage'
 import LoginPage from './components/LoginPage'
 import SignUpPage from './components/SignUpPage'
 import * as api from './services/supabaseService'
@@ -125,6 +126,8 @@ const App: React.FC = () => {
                 return <SalesReportPage showToast={showToast} currentUser={currentUser} />
             case 'user_management':
                  return <UserManagementPage showToast={showToast} currentUser={currentUser} />
+            case 'staff_management':
+                 return <StaffManagementPage showToast={showToast} currentUser={currentUser} />
             case 'api_tokens':
                  return <ApiTokensPage showToast={showToast} currentUser={currentUser} />
             case 'audit_log':

@@ -3130,6 +3130,468 @@ app.post('/api/staff/unassign-table', authenticateStaffToken, async (req, res) =
   }
 });
 
+// ========================================
+// STAFF MANAGEMENT (CRUD) - PORTAL
+// ========================================
+
+// Get all staff members (filtered by property/restaurant)
+app.get('/api/staff', authenticateToken, async (req, res) => {
+  try {
+    const { propertyId, restaurantId } = req.query;
+    
+    let query = supabase
+      .from('staff')
+      .select('id, name, pin, role, restaurant_id, is_active, created_at, updated_at')
+      .order('created_at', { ascending: false });
+    
+    // Filter by restaurant if provided
+    if (restaurantId) {
+      query = query.eq('restaurant_id', restaurantId);
+    }
+    
+    // Filter by property if provided (need to join with restaurants)
+    if (propertyId) {
+      const { data: restaurants, error: restaurantsError } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('property_id', propertyId);
+      
+      if (restaurantsError) {
+        console.error('Supabase error fetching restaurants:', restaurantsError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch restaurants',
+          error: restaurantsError.message
+        });
+      }
+      
+      const restaurantIds = restaurants.map(r => r.id);
+      if (restaurantIds.length > 0) {
+        query = query.in('restaurant_id', restaurantIds);
+      } else {
+        // No restaurants for this property, return empty array
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
+    }
+    
+    // For Admin/Manager roles, filter by their property
+    if (req.user.role !== 'SuperAdmin' && req.user.propertyId) {
+      const { data: restaurants, error: restaurantsError } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('property_id', req.user.propertyId);
+      
+      if (restaurantsError) {
+        console.error('Supabase error fetching restaurants:', restaurantsError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch restaurants',
+          error: restaurantsError.message
+        });
+      }
+      
+      const restaurantIds = restaurants.map(r => r.id);
+      if (restaurantIds.length > 0) {
+        query = query.in('restaurant_id', restaurantIds);
+      } else {
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch staff',
+        error: error.message
+      });
+    }
+    
+    // Transform and exclude PIN from response
+    const transformedData = (data || []).map(staff => {
+      const { pin, ...staffWithoutPin } = transformObject(staff);
+      return staffWithoutPin;
+    });
+    
+    res.json({
+      success: true,
+      data: transformedData
+    });
+  } catch (err) {
+    console.error('Error fetching staff:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Create new staff member
+app.post('/api/staff', authenticateToken, async (req, res) => {
+  try {
+    const { name, pin, role, restaurantId } = req.body;
+    
+    // Validation
+    if (!name || !pin || !role || !restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: name, pin, role, restaurantId',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // Validate PIN format (4 digits)
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        error: 'PIN must be exactly 4 digits',
+        code: 'INVALID_PIN_FORMAT'
+      });
+    }
+    
+    // Validate role
+    const validRoles = ['waiter', 'manager', 'server', 'host', 'bartender'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid role. Must be one of: ${validRoles.join(', ')}`,
+        code: 'INVALID_ROLE'
+      });
+    }
+    
+    // Validate restaurant exists and user has access
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id, property_id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found',
+        code: 'RESTAURANT_NOT_FOUND'
+      });
+    }
+    
+    // Check if user has access to this restaurant's property
+    if (req.user.role !== 'SuperAdmin' && req.user.propertyId !== restaurant.property_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied to this restaurant',
+        code: 'ACCESS_DENIED'
+      });
+    }
+    
+    // Check if PIN already exists for this restaurant
+    const { data: existingStaff, error: checkError } = await supabase
+      .from('staff')
+      .select('id')
+      .eq('pin', pin)
+      .eq('restaurant_id', restaurantId)
+      .maybeSingle();
+    
+    if (checkError) {
+      console.error('Supabase error checking PIN:', checkError);
+      return res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    if (existingStaff) {
+      return res.status(409).json({
+        success: false,
+        error: 'PIN already exists for this restaurant',
+        code: 'PIN_ALREADY_EXISTS'
+      });
+    }
+    
+    // Create staff member
+    const { data: newStaff, error: insertError } = await supabase
+      .from('staff')
+      .insert({
+        name,
+        pin,
+        role,
+        restaurant_id: restaurantId,
+        is_active: true
+      })
+      .select('id, name, pin, role, restaurant_id, is_active, created_at, updated_at')
+      .single();
+    
+    if (insertError) {
+      console.error('Supabase error creating staff:', insertError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create staff member',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    // Transform and exclude PIN from response
+    const { pin: _, ...staffWithoutPin } = transformObject(newStaff);
+    
+    res.status(201).json({
+      success: true,
+      data: staffWithoutPin,
+      message: 'Staff member created successfully'
+    });
+  } catch (err) {
+    console.error('Error creating staff:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// Update staff member
+app.put('/api/staff/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, pin, role, isActive } = req.body;
+    
+    // Get existing staff member
+    const { data: existingStaff, error: fetchError } = await supabase
+      .from('staff')
+      .select('id, name, pin, role, restaurant_id, is_active')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !existingStaff) {
+      return res.status(404).json({
+        success: false,
+        error: 'Staff member not found',
+        code: 'STAFF_NOT_FOUND'
+      });
+    }
+    
+    // Get restaurant to check property access
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('property_id')
+      .eq('id', existingStaff.restaurant_id)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found',
+        code: 'RESTAURANT_NOT_FOUND'
+      });
+    }
+    
+    // Check access
+    const restaurantPropertyId = restaurant.property_id;
+    if (req.user.role !== 'SuperAdmin' && req.user.propertyId !== restaurantPropertyId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied',
+        code: 'ACCESS_DENIED'
+      });
+    }
+    
+    // Build update object
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (role !== undefined) {
+      const validRoles = ['waiter', 'manager', 'server', 'host', 'bartender'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid role. Must be one of: ${validRoles.join(', ')}`,
+          code: 'INVALID_ROLE'
+        });
+      }
+      updateData.role = role;
+    }
+    if (isActive !== undefined) updateData.is_active = isActive;
+    if (pin !== undefined) {
+      // Validate PIN format
+      if (!/^\d{4}$/.test(pin)) {
+        return res.status(400).json({
+          success: false,
+          error: 'PIN must be exactly 4 digits',
+          code: 'INVALID_PIN_FORMAT'
+        });
+      }
+      
+      // Check if PIN already exists for this restaurant (excluding current staff)
+      const { data: existingPin, error: checkError } = await supabase
+        .from('staff')
+        .select('id')
+        .eq('pin', pin)
+        .eq('restaurant_id', existingStaff.restaurant_id)
+        .neq('id', id)
+        .maybeSingle();
+      
+      if (checkError) {
+        console.error('Supabase error checking PIN:', checkError);
+        return res.status(500).json({
+          success: false,
+          error: 'Internal server error',
+          code: 'INTERNAL_ERROR'
+        });
+      }
+      
+      if (existingPin) {
+        return res.status(409).json({
+          success: false,
+          error: 'PIN already exists for this restaurant',
+          code: 'PIN_ALREADY_EXISTS'
+        });
+      }
+      
+      updateData.pin = pin;
+    }
+    
+    updateData.updated_at = new Date().toISOString();
+    
+    // Update staff member
+    const { data: updatedStaff, error: updateError } = await supabase
+      .from('staff')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, name, pin, role, restaurant_id, is_active, created_at, updated_at')
+      .single();
+    
+    if (updateError) {
+      console.error('Supabase error updating staff:', updateError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update staff member',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    // Transform and exclude PIN from response
+    const { pin: _, ...staffWithoutPin } = transformObject(updatedStaff);
+    
+    res.json({
+      success: true,
+      data: staffWithoutPin,
+      message: 'Staff member updated successfully'
+    });
+  } catch (err) {
+    console.error('Error updating staff:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// Delete staff member
+app.delete('/api/staff/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get existing staff member
+    const { data: existingStaff, error: fetchError } = await supabase
+      .from('staff')
+      .select('id, name, restaurant_id')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !existingStaff) {
+      return res.status(404).json({
+        success: false,
+        error: 'Staff member not found',
+        code: 'STAFF_NOT_FOUND'
+      });
+    }
+    
+    // Get restaurant to check property access
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('property_id')
+      .eq('id', existingStaff.restaurant_id)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found',
+        code: 'RESTAURANT_NOT_FOUND'
+      });
+    }
+    
+    // Check access
+    const restaurantPropertyId = restaurant.property_id;
+    if (req.user.role !== 'SuperAdmin' && req.user.propertyId !== restaurantPropertyId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied',
+        code: 'ACCESS_DENIED'
+      });
+    }
+    
+    // Check if staff has active assignments
+    const { data: activeAssignments, error: assignmentsError } = await supabase
+      .from('staff_assignments')
+      .select('id')
+      .eq('staff_id', id)
+      .eq('is_active', true)
+      .limit(1);
+    
+    if (assignmentsError) {
+      console.error('Supabase error checking assignments:', assignmentsError);
+      return res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    if (activeAssignments && activeAssignments.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete staff member with active table assignments',
+        code: 'HAS_ACTIVE_ASSIGNMENTS'
+      });
+    }
+    
+    // Delete staff member
+    const { error: deleteError } = await supabase
+      .from('staff')
+      .delete()
+      .eq('id', id);
+    
+    if (deleteError) {
+      console.error('Supabase error deleting staff:', deleteError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to delete staff member',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Staff member deleted successfully'
+    });
+  } catch (err) {
+    console.error('Error deleting staff:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
 // Orders endpoints
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
