@@ -3611,7 +3611,7 @@ app.delete('/api/staff/:id', authenticateToken, async (req, res) => {
 // Orders endpoints
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
-    const { restaurantId } = req.query;
+    const { restaurantId, status } = req.query;
     // Explicitly select fields including Order ID, table number, and timestamp (TIMESTAMPTZ)
     let query = supabase
       .from('live_orders')
@@ -3620,6 +3620,24 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     
     if (restaurantId) {
       query = query.eq('restaurant_id', restaurantId);
+    }
+    
+    // Filter by status if provided (case-insensitive matching)
+    if (status) {
+      const statusStr = typeof status === 'string' ? status.trim() : String(status);
+      // Map common lowercase status values to database enum values
+      const statusMap = {
+        'completed': 'Completed',
+        'cancelled': 'Cancelled',
+        'new': 'New',
+        'confirmed': 'Confirmed',
+        'preparing': 'Preparing',
+        'ready': 'Ready'
+      };
+      
+      // Use mapped value if available, otherwise use the provided value as-is
+      const dbStatus = statusMap[statusStr.toLowerCase()] || statusStr;
+      query = query.eq('status', dbStatus);
     }
     
     const { data, error } = await query;
