@@ -2906,11 +2906,14 @@ app.get('/api/staff/assignments', async (req, res) => {
     const { tableNumber, restaurantId, staffId, activeOnly } = req.query;
     
     // Try to authenticate (optional for portal users)
+    // Supports both Supabase Auth tokens and JWT tokens
     let user = null;
-    try {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      
+      // First, try Supabase Auth token
+      try {
         const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
         if (!authError && authUser) {
           // Get user details from users table
@@ -2927,9 +2930,38 @@ app.get('/api/staff/assignments', async (req, res) => {
             };
           }
         }
+      } catch (supabaseError) {
+        // Not a Supabase token, try JWT
+        try {
+          if (JWT_SECRET) {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            if (decoded && decoded.id) {
+              // Get user details from users table
+              const { data: userData } = await supabase
+                .from('users')
+                .select('id, name, email, role, property_id')
+                .eq('id', decoded.id)
+                .single();
+              if (userData) {
+                user = {
+                  id: userData.id,
+                  role: userData.role,
+                  propertyId: userData.property_id
+                };
+              } else if (decoded.role) {
+                // JWT might contain user info directly (backward compatibility)
+                user = {
+                  id: decoded.id,
+                  role: decoded.role,
+                  propertyId: decoded.propertyId
+                };
+              }
+            }
+          }
+        } catch (jwtError) {
+          // Not a JWT token either, continue without user (for tablet app compatibility)
+        }
       }
-    } catch (authErr) {
-      // Authentication failed, continue without user (for tablet app compatibility)
     }
     
     // Handle restaurantId
@@ -3016,6 +3048,14 @@ app.get('/api/staff/assignments', async (req, res) => {
           code: 'VALIDATION_ERROR'
         });
       }
+    }
+    
+    // Safety check: if no valid restaurant IDs, return empty array
+    if (validRestaurantIds.length === 0) {
+      return res.json({
+        success: true,
+        data: tableNumber ? null : []
+      });
     }
     
     // Build query
