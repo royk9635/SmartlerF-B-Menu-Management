@@ -346,3 +346,45 @@ export interface CreateServiceRequestRequest {
     message?: string;
     restaurantId?: string;
 }
+
+// --- Staff Tracking Types ---
+export interface Staff {
+    id: string;
+    name: string;
+    pin?: string; // Only for creation, never returned in API responses
+    role: 'waiter' | 'manager' | 'server' | 'host' | 'bartender';
+    restaurantId: string;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface StaffAssignment {
+    id: string;
+    staffId: string;
+    staff?: Staff; // Populated in GET responses
+    tableNumber: number;
+    restaurantId: string;
+    assignedAt: string;
+    unassignedAt?: string | null;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface VerifyPinRequest {
+    pin: string;
+    restaurantId?: string;
+}
+
+export interface AssignTableRequest {
+    staffId: string;
+    staffName: string;
+    tableNumber: number;
+    restaurantId: string;
+}
+
+export interface UnassignTableRequest {
+    tableNumber: number;
+    restaurantId: string;
+}

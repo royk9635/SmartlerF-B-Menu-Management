@@ -4,7 +4,8 @@ import {
   Property, Restaurant, MenuCategory, MenuItem, User, Sale,
   Attribute, Allergen, ModifierGroup, ModifierItem, PublicMenu,
   AuditLog, LiveOrder, OrderStatus, SubCategory, SystemMenuImportPayload, SystemImportStats,
-  ApiToken, GenerateTokenRequest, ServiceRequest, ServiceRequestStatus
+  ApiToken, GenerateTokenRequest, ServiceRequest, ServiceRequestStatus,
+  Staff, StaffAssignment, AssignTableRequest, UnassignTableRequest
 } from '../types';
 
 // --- Authentication API ---
@@ -409,6 +410,47 @@ export const serviceRequestsApi = {
 
   complete: async (id: string): Promise<ServiceRequest> => {
     const response = await httpClient.patch<ApiResponse<ServiceRequest>>(`/service-requests/${id}/complete`, {});
+    return response.data;
+  },
+};
+
+// --- Staff API ---
+export const staffApi = {
+  verifyPin: async (pin: string, restaurantId?: string): Promise<Staff> => {
+    const response = await httpClient.post<ApiResponse<Staff>>('/staff/verify-pin', {
+      pin,
+      restaurantId
+    });
+    return response.data;
+  },
+
+  assignTable: async (data: AssignTableRequest): Promise<StaffAssignment> => {
+    const response = await httpClient.post<ApiResponse<StaffAssignment>>('/staff/assign-table', data);
+    return response.data;
+  },
+
+  getAssignments: async (params?: {
+    tableNumber?: number;
+    restaurantId?: string;
+    staffId?: string;
+    activeOnly?: boolean;
+  }): Promise<StaffAssignment | StaffAssignment[]> => {
+    const queryParams = new URLSearchParams();
+    if (params?.tableNumber) queryParams.append('tableNumber', params.tableNumber.toString());
+    if (params?.restaurantId) queryParams.append('restaurantId', params.restaurantId);
+    if (params?.staffId) queryParams.append('staffId', params.staffId);
+    if (params?.activeOnly !== undefined) queryParams.append('activeOnly', params.activeOnly.toString());
+    
+    const url = `/staff/assignments${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await httpClient.get<ApiResponse<StaffAssignment | StaffAssignment[]>>(url);
+    return response.data;
+  },
+
+  unassignTable: async (tableNumber: number, restaurantId: string): Promise<StaffAssignment> => {
+    const response = await httpClient.post<ApiResponse<StaffAssignment>>('/staff/unassign-table', {
+      tableNumber,
+      restaurantId
+    });
     return response.data;
   },
 };

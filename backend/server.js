@@ -504,6 +504,121 @@ const authenticateApiToken = async (req, res, next) => {
   }
 };
 
+// Rate limiting for PIN verification (in-memory, simple implementation)
+const pinAttempts = new Map(); // IP -> { count, resetTime }
+
+const rateLimitPinVerification = (req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15 minutes
+  const maxAttempts = 5;
+
+  const attempts = pinAttempts.get(ip);
+  
+  if (attempts) {
+    if (now < attempts.resetTime) {
+      if (attempts.count >= maxAttempts) {
+        return res.status(429).json({
+          success: false,
+          error: 'Too many PIN verification attempts. Please try again later.',
+          code: 'RATE_LIMIT_EXCEEDED'
+        });
+      }
+      attempts.count++;
+    } else {
+      // Reset window
+      pinAttempts.set(ip, { count: 1, resetTime: now + windowMs });
+    }
+  } else {
+    pinAttempts.set(ip, { count: 1, resetTime: now + windowMs });
+  }
+
+  next();
+};
+
+// Middleware to validate staff JWT tokens (from tablet app)
+const authenticateStaffToken = async (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Invalid or missing authentication token',
+      code: 'UNAUTHORIZED'
+    });
+  }
+
+  try {
+    // Verify JWT token
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Validate token structure
+    if (!decoded.staffId || !decoded.restaurantId) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Invalid token structure',
+        code: 'INVALID_TOKEN'
+      });
+    }
+
+    // Verify staff exists and is active
+    const { data: staff, error } = await supabase
+      .from('staff')
+      .select('id, name, role, restaurant_id, is_active')
+      .eq('id', decoded.staffId)
+      .single();
+
+    if (error || !staff) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Staff member not found',
+        code: 'STAFF_NOT_FOUND'
+      });
+    }
+
+    if (!staff.is_active) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Staff member is inactive',
+        code: 'STAFF_INACTIVE'
+      });
+    }
+
+    if (staff.restaurant_id !== decoded.restaurantId) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Restaurant mismatch',
+        code: 'RESTAURANT_MISMATCH'
+      });
+    }
+
+    // Attach staff info to request
+    req.staff = {
+      id: staff.id,
+      name: staff.name,
+      role: staff.role,
+      restaurantId: staff.restaurant_id
+    };
+
+    next();
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Token has expired',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+    
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Invalid token',
+      code: 'INVALID_TOKEN'
+    });
+  }
+};
+
 // Helper function to generate ID
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -2533,6 +2648,484 @@ app.patch('/api/service-requests/:id/complete', authenticateToken, async (req, r
       success: false,
       message: 'Internal server error',
       error: err.message
+    });
+  }
+});
+
+// ============================================
+// STAFF TRACKING ENDPOINTS
+// ============================================
+
+// POST /api/staff/verify-pin - Verify staff PIN (public endpoint)
+app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => {
+  try {
+    const { pin, restaurantId } = req.body;
+    
+    // Validate PIN format
+    if (!pin || typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        error: 'PIN must be exactly 4 digits',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // Build query
+    let query = supabase
+      .from('staff')
+      .select('id, name, role, restaurant_id, is_active, created_at, updated_at')
+      .eq('pin', pin);
+    
+    // If restaurantId provided, filter by it
+    if (restaurantId) {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(restaurantId)) {
+        query = query.eq('restaurant_id', restaurantId);
+      } else {
+        // Try to look up as tenant_id
+        const { data: property } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('tenant_id', restaurantId)
+          .single();
+        
+        if (property) {
+          const { data: restaurants } = await supabase
+            .from('restaurants')
+            .select('id')
+            .eq('property_id', property.id);
+          
+          if (restaurants && restaurants.length > 0) {
+            const restaurantIds = restaurants.map(r => r.id);
+            query = query.in('restaurant_id', restaurantIds);
+          } else {
+            return res.status(404).json({
+              success: false,
+              error: 'Staff member not found',
+              code: 'STAFF_NOT_FOUND'
+            });
+          }
+        } else {
+          return res.status(404).json({
+            success: false,
+            error: 'Staff member not found',
+            code: 'STAFF_NOT_FOUND'
+          });
+        }
+      }
+    }
+    
+    const { data: staff, error } = await query.maybeSingle();
+    
+    if (error) {
+      console.error('Supabase error verifying PIN:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    if (!staff) {
+      // Log failed attempt
+      console.warn(`[PIN Verification] Failed PIN attempt from IP: ${req.ip || 'unknown'}`);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid PIN',
+        code: 'INVALID_PIN'
+      });
+    }
+    
+    if (!staff.is_active) {
+      return res.status(403).json({
+        success: false,
+        error: 'Staff member is inactive',
+        code: 'STAFF_INACTIVE'
+      });
+    }
+    
+    // Reset rate limiting on successful verification
+    const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
+    pinAttempts.delete(ip);
+    
+    // Return staff details (without PIN)
+    const transformedData = transformObject(staff);
+    
+    res.json({
+      success: true,
+      data: transformedData,
+      message: 'PIN verified successfully'
+    });
+  } catch (err) {
+    console.error('Error verifying PIN:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// POST /api/staff/assign-table - Assign staff to table
+app.post('/api/staff/assign-table', authenticateStaffToken, async (req, res) => {
+  try {
+    const { staffId, staffName, tableNumber, restaurantId } = req.body;
+    
+    // Validation
+    if (!staffId || !staffName || !tableNumber || !restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: staffId, staffName, tableNumber, restaurantId',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // Validate tableNumber
+    const tableNum = parseInt(tableNumber);
+    if (isNaN(tableNum) || tableNum < 1 || tableNum > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'tableNumber must be between 1 and 100',
+        code: 'INVALID_TABLE_NUMBER'
+      });
+    }
+    
+    // Verify staffId matches authenticated staff
+    if (req.staff.id !== staffId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Staff ID does not match authenticated user',
+        code: 'FORBIDDEN'
+      });
+    }
+    
+    // Verify restaurantId matches
+    if (req.staff.restaurantId !== restaurantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Restaurant mismatch',
+        code: 'RESTAURANT_MISMATCH'
+      });
+    }
+    
+    // Find existing active assignment for this table
+    const { data: existingAssignment } = await supabase
+      .from('staff_assignments')
+      .select('id')
+      .eq('table_number', tableNum)
+      .eq('restaurant_id', restaurantId)
+      .eq('is_active', true)
+      .maybeSingle();
+    
+    // Deactivate existing assignment if found
+    if (existingAssignment) {
+      await supabase
+        .from('staff_assignments')
+        .update({
+          is_active: false,
+          unassigned_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingAssignment.id);
+    }
+    
+    // Create new assignment
+    const assignmentData = {
+      staff_id: staffId,
+      table_number: tableNum,
+      restaurant_id: restaurantId,
+      is_active: true
+    };
+    
+    const { data: assignment, error } = await supabase
+      .from('staff_assignments')
+      .insert(assignmentData)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Supabase error creating assignment:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create assignment',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    // Emit WebSocket event
+    if (io) {
+      io.emit('staff_assigned', {
+        type: 'staff_assigned',
+        data: {
+          assignmentId: assignment.id,
+          staffId: staffId,
+          staffName: staffName,
+          tableNumber: tableNum,
+          restaurantId: restaurantId,
+          timestamp: assignment.assigned_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase
+    const transformedData = transformObject(assignment);
+    
+    res.status(201).json({
+      success: true,
+      data: transformedData,
+      message: 'Staff assigned to table successfully'
+    });
+  } catch (err) {
+    console.error('Error assigning staff to table:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// GET /api/staff/assignments - Get staff assignments
+app.get('/api/staff/assignments', async (req, res) => {
+  try {
+    const { tableNumber, restaurantId, staffId, activeOnly } = req.query;
+    
+    // restaurantId is required
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'restaurantId is required',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // Handle restaurantId (UUID or tenant_id)
+    let validRestaurantIds = [];
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    if (uuidRegex.test(restaurantId)) {
+      validRestaurantIds = [restaurantId];
+    } else {
+      // Look up as tenant_id
+      const { data: property } = await supabase
+        .from('properties')
+        .select('id')
+        .eq('tenant_id', restaurantId)
+        .single();
+      
+      if (property) {
+        const { data: restaurants } = await supabase
+          .from('restaurants')
+          .select('id')
+          .eq('property_id', property.id);
+        
+        if (restaurants && restaurants.length > 0) {
+          validRestaurantIds = restaurants.map(r => r.id);
+        } else {
+          return res.json({
+            success: true,
+            data: tableNumber ? null : []
+          });
+        }
+      } else {
+        return res.json({
+          success: true,
+          data: tableNumber ? null : []
+        });
+      }
+    }
+    
+    // Build query
+    let query = supabase
+      .from('staff_assignments')
+      .select(`
+        *,
+        staff:staff_id (
+          id,
+          name,
+          role,
+          restaurant_id,
+          is_active
+        )
+      `)
+      .in('restaurant_id', validRestaurantIds);
+    
+    // Apply filters
+    if (tableNumber) {
+      const tableNum = parseInt(tableNumber);
+      if (!isNaN(tableNum)) {
+        query = query.eq('table_number', tableNum);
+      }
+    }
+    
+    if (staffId) {
+      query = query.eq('staff_id', staffId);
+    }
+    
+    const activeOnlyFlag = activeOnly === undefined || activeOnly === 'true' || activeOnly === true;
+    if (activeOnlyFlag) {
+      query = query.eq('is_active', true);
+    }
+    
+    query = query.order('assigned_at', { ascending: false });
+    
+    const { data: assignments, error } = await query;
+    
+    if (error) {
+      console.error('Supabase error fetching assignments:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch assignments',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    // Transform data
+    let transformedData;
+    if (tableNumber && assignments && assignments.length > 0) {
+      // Single assignment
+      transformedData = transformObject(assignments[0]);
+      // Include staff details
+      if (assignments[0].staff) {
+        transformedData.staff = transformObject(assignments[0].staff);
+      }
+    } else if (tableNumber) {
+      // No assignment found for single table query
+      transformedData = null;
+    } else {
+      // Multiple assignments
+      transformedData = (assignments || []).map(assignment => {
+        const transformed = transformObject(assignment);
+        if (assignment.staff) {
+          transformed.staff = transformObject(assignment.staff);
+        }
+        return transformed;
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: transformedData
+    });
+  } catch (err) {
+    console.error('Error fetching assignments:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// POST /api/staff/unassign-table - Unassign staff from table
+app.post('/api/staff/unassign-table', authenticateStaffToken, async (req, res) => {
+  try {
+    const { tableNumber, restaurantId } = req.body;
+    
+    // Validation
+    if (!tableNumber || !restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: tableNumber, restaurantId',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+    
+    const tableNum = parseInt(tableNumber);
+    if (isNaN(tableNum) || tableNum < 1 || tableNum > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'tableNumber must be between 1 and 100',
+        code: 'INVALID_TABLE_NUMBER'
+      });
+    }
+    
+    // Verify restaurantId matches authenticated staff
+    if (req.staff.restaurantId !== restaurantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Restaurant mismatch',
+        code: 'RESTAURANT_MISMATCH'
+      });
+    }
+    
+    // Find active assignment
+    const { data: assignment, error: findError } = await supabase
+      .from('staff_assignments')
+      .select('*')
+      .eq('table_number', tableNum)
+      .eq('restaurant_id', restaurantId)
+      .eq('is_active', true)
+      .maybeSingle();
+    
+    if (findError) {
+      console.error('Supabase error finding assignment:', findError);
+      return res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active assignment found for this table',
+        code: 'ASSIGNMENT_NOT_FOUND'
+      });
+    }
+    
+    // Deactivate assignment
+    const { data: updatedAssignment, error: updateError } = await supabase
+      .from('staff_assignments')
+      .update({
+        is_active: false,
+        unassigned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assignment.id)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('Supabase error updating assignment:', updateError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to unassign staff',
+        code: 'INTERNAL_ERROR'
+      });
+    }
+    
+    // Emit WebSocket event
+    if (io) {
+      io.emit('staff_unassigned', {
+        type: 'staff_unassigned',
+        data: {
+          assignmentId: updatedAssignment.id,
+          staffId: assignment.staff_id,
+          tableNumber: tableNum,
+          restaurantId: restaurantId,
+          timestamp: updatedAssignment.unassigned_at
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Transform snake_case to camelCase
+    const transformedData = transformObject(updatedAssignment);
+    
+    res.json({
+      success: true,
+      data: transformedData,
+      message: 'Staff unassigned from table successfully'
+    });
+  } catch (err) {
+    console.error('Error unassigning staff:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
     });
   }
 });
