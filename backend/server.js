@@ -368,51 +368,12 @@ const authenticateToken = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Access token required' });
   }
 
-  // First, try Supabase Auth token (EASIEST - no JWT secret needed!)
-  // Use supabaseAuth (anon key) for validating user tokens
-  try {
-    const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
-    
-    if (!authError && authUser) {
-      // Valid Supabase Auth token - get user from users table
-      const { data: user } = await supabase
-        .from('users')
-        .select('id, name, email, role, property_id')
-        .eq('id', authUser.id)
-        .single();
-      
-      if (user) {
-        req.user = {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          propertyId: user.property_id
-        };
-        req.authType = 'supabase';
-        return next();
-      } else {
-        console.warn(`[Auth] Supabase user found but not in users table: ${authUser.id}`);
-      }
-    } else if (authError) {
-      // Log Supabase auth error for debugging (but don't fail yet, try other methods)
-      console.warn(`[Auth] Supabase auth failed for ${req.method} ${req.path}: ${authError.message}`);
-      console.warn(`[Auth] Token preview: ${token.substring(0, 20)}...`);
-    }
-  } catch (supabaseError) {
-    // Not a Supabase token, try JWT
-    console.debug(`[Auth] Supabase token check error: ${supabaseError.message}`);
-  }
-
-  // Try JWT token (for backward compatibility)
-  jwt.verify(token, JWT_SECRET, async (err, user) => {
-    if (!err) {
-      // Valid JWT token
-      req.user = user;
-      req.authType = 'jwt';
-      return next();
-    }
-
-    // If JWT verification fails, check if it's an API token (for tablet apps)
+  // Check if token looks like an API token (starts with smtlr_ or tb_)
+  // API tokens should be checked BEFORE trying JWT verification to avoid format errors
+  const isApiTokenFormat = token.startsWith('smtlr_') || token.startsWith('tb_');
+  
+  if (isApiTokenFormat) {
+    // This looks like an API token - validate it directly
     try {
       const { data: apiToken, error } = await supabase
         .from('api_tokens')
@@ -448,18 +409,90 @@ const authenticateToken = async (req, res, next) => {
       } else if (error && error.code !== 'PGRST116') {
         // PGRST116 is "not found" which is expected, other errors are real issues
         console.error(`[Auth] Error checking API token: ${error.message}`);
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Invalid or inactive API token'
+        });
+      } else {
+        // API token not found
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Invalid or inactive API token'
+        });
       }
     } catch (dbErr) {
       console.error('[Auth] Error checking API token:', dbErr);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Internal server error during authentication'
+      });
     }
+  }
+
+  // Not an API token format - try Supabase Auth token first
+  try {
+    const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
     
-    // Neither JWT nor API token is valid
-    console.warn(`[Auth] Invalid token for ${req.method} ${req.path} - token preview: ${token.substring(0, 10)}...`);
-    return res.status(403).json({ 
-      success: false, 
-      message: 'Invalid or expired token. Please log in again.',
-      hint: 'The authentication token provided is not valid. This may happen if the token has expired or the session has ended.'
-    });
+    if (!authError && authUser) {
+      // Valid Supabase Auth token - get user from users table
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, name, email, role, property_id')
+        .eq('id', authUser.id)
+        .single();
+      
+      if (user) {
+        req.user = {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          propertyId: user.property_id
+        };
+        req.authType = 'supabase';
+        return next();
+      } else {
+        console.warn(`[Auth] Supabase user found but not in users table: ${authUser.id}`);
+      }
+    } else if (authError) {
+      // Log Supabase auth error for debugging (but don't fail yet, try JWT)
+      console.debug(`[Auth] Supabase auth failed for ${req.method} ${req.path}: ${authError.message}`);
+    }
+  } catch (supabaseError) {
+    // Not a Supabase token, try JWT
+    console.debug(`[Auth] Supabase token check error: ${supabaseError.message}`);
+  }
+
+  // Try JWT token (for backward compatibility)
+  // Only try JWT if we have a JWT_SECRET and the token doesn't look like an API token
+  if (JWT_SECRET) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      // Valid JWT token
+      req.user = decoded;
+      req.authType = 'jwt';
+      return next();
+    } catch (jwtError) {
+      // JWT verification failed - token is invalid
+      if (jwtError.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Token has expired. Please log in again.'
+        });
+      } else if (jwtError.name === 'JsonWebTokenError') {
+        // Invalid JWT format - this is expected for non-JWT tokens
+        console.debug(`[Auth] JWT verification failed: ${jwtError.message}`);
+      } else {
+        console.warn(`[Auth] JWT verification error: ${jwtError.message}`);
+      }
+    }
+  }
+  
+  // None of the authentication methods worked
+  console.warn(`[Auth] Invalid token for ${req.method} ${req.path} - token preview: ${token.substring(0, 20)}...`);
+  return res.status(403).json({ 
+    success: false, 
+    message: 'Invalid or expired token. Please log in again.',
+    hint: 'The authentication token provided is not valid. This may happen if the token has expired or the session has ended.'
   });
 };
 
@@ -1191,7 +1224,7 @@ app.get('/api/restaurants', authenticateToken, async (req, res) => {
       
       if (uuidRegex.test(propertyId)) {
         // It's a UUID, use it directly
-        query = query.eq('property_id', propertyId);
+      query = query.eq('property_id', propertyId);
       } else {
         // It's not a UUID, treat it as tenant_id and look up the property first
         const { data: property, error: propertyError } = await supabase
