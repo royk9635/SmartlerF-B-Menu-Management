@@ -152,6 +152,44 @@ const io = new Server(server, {
   }
 });
 
+// Periodic cleanup job: Deactivate staff with no active assignments
+async function cleanupInactiveStaff() {
+  try {
+    // Get all active staff
+    const { data: activeStaff } = await supabase
+      .from('staff')
+      .select('id')
+      .eq('is_active', true);
+    
+    if (!activeStaff || activeStaff.length === 0) return;
+    
+    // For each active staff, check if they have active assignments
+    for (const staff of activeStaff) {
+      const { data: assignments } = await supabase
+        .from('staff_assignments')
+        .select('id')
+        .eq('staff_id', staff.id)
+        .eq('is_active', true)
+        .limit(1);
+      
+      // If no active assignments, deactivate staff
+      if (!assignments || assignments.length === 0) {
+        await supabase
+          .from('staff')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', staff.id);
+        console.log(`[Cleanup] Deactivated staff ${staff.id} - no active assignments`);
+      }
+    }
+  } catch (error) {
+    console.error('[Cleanup] Error cleaning up inactive staff:', error);
+  }
+}
+
+// Run cleanup every 5 minutes
+setInterval(cleanupInactiveStaff, 5 * 60 * 1000);
+console.log('✅ Periodic staff cleanup job started (runs every 5 minutes)');
+
 // Security Headers Middleware
 app.use((req, res, next) => {
   // Security headers for production
@@ -2854,6 +2892,12 @@ app.post('/api/staff/assign-table', authenticateStaffToken, async (req, res) => 
       });
     }
     
+    // Auto-activate staff when they assign themselves to a table
+    await supabase
+      .from('staff')
+      .update({ is_active: true, updated_at: new Date().toISOString() })
+      .eq('id', staffId);
+    
     // Emit WebSocket event
     if (io) {
       io.emit('staff_assigned', {
@@ -3097,6 +3141,23 @@ app.post('/api/staff/unassign-table', authenticateStaffToken, async (req, res) =
         error: 'Failed to unassign staff',
         code: 'INTERNAL_ERROR'
       });
+    }
+    
+    // Check if this was the staff member's last active assignment
+    const { data: otherAssignments } = await supabase
+      .from('staff_assignments')
+      .select('id')
+      .eq('staff_id', assignment.staff_id)
+      .eq('is_active', true)
+      .limit(1);
+    
+    // If no other active assignments, auto-deactivate staff
+    if (!otherAssignments || otherAssignments.length === 0) {
+      await supabase
+        .from('staff')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', assignment.staff_id);
+      console.log(`[Auto-Deactivate] Staff ${assignment.staff_id} deactivated - no active assignments`);
     }
     
     // Emit WebSocket event
@@ -3598,9 +3659,10 @@ app.delete('/api/staff/:id', authenticateToken, async (req, res) => {
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
     const { restaurantId } = req.query;
+    // Explicitly select fields including Order ID, table number, and timestamp (TIMESTAMPTZ)
     let query = supabase
       .from('live_orders')
-      .select('*')
+      .select('id, table_number, placed_at, items, total_amount, restaurant_id, status, payment_id, payment_status, payment_method, payment_date')
       .order('placed_at', { ascending: false });
     
     if (restaurantId) {
@@ -3618,8 +3680,16 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       });
     }
     
-    // Transform snake_case to camelCase
-    const transformedData = transformObject(data || []);
+    // Transform snake_case to camelCase and ensure timestamp is properly formatted
+    const transformedData = (data || []).map(order => {
+      const transformed = transformObject(order);
+      // Ensure timestamp (placed_at -> placedAt) is properly formatted as ISO string
+      if (transformed.placedAt) {
+        // If it's already a string, ensure it's in ISO format
+        transformed.placedAt = new Date(transformed.placedAt).toISOString();
+      }
+      return transformed;
+    });
     
     res.json({
       success: true,
