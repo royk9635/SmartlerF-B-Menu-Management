@@ -2900,51 +2900,120 @@ app.post('/api/staff/assign-table', authenticateStaffToken, async (req, res) => 
 });
 
 // GET /api/staff/assignments - Get staff assignments
+// Supports both authenticated (portal) and unauthenticated (tablet app) calls
 app.get('/api/staff/assignments', async (req, res) => {
   try {
     const { tableNumber, restaurantId, staffId, activeOnly } = req.query;
     
-    // restaurantId is required
-    if (!restaurantId) {
-      return res.status(400).json({
-        success: false,
-        error: 'restaurantId is required',
-        code: 'VALIDATION_ERROR'
-      });
+    // Try to authenticate (optional for portal users)
+    let user = null;
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
+        if (!authError && authUser) {
+          // Get user details from users table
+          const { data: userData } = await supabase
+            .from('users')
+            .select('id, name, email, role, property_id')
+            .eq('id', authUser.id)
+            .single();
+          if (userData) {
+            user = {
+              id: userData.id,
+              role: userData.role,
+              propertyId: userData.property_id
+            };
+          }
+        }
+      }
+    } catch (authErr) {
+      // Authentication failed, continue without user (for tablet app compatibility)
     }
     
-    // Handle restaurantId (UUID or tenant_id)
+    // Handle restaurantId
     let validRestaurantIds = [];
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     
-    if (uuidRegex.test(restaurantId)) {
-      validRestaurantIds = [restaurantId];
-    } else {
-      // Look up as tenant_id
-      const { data: property } = await supabase
-        .from('properties')
-        .select('id')
-        .eq('tenant_id', restaurantId)
-        .single();
+    if (restaurantId) {
+      // Handle restaurantId (UUID or tenant_id)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       
-      if (property) {
-        const { data: restaurants } = await supabase
-          .from('restaurants')
+      if (uuidRegex.test(restaurantId)) {
+        validRestaurantIds = [restaurantId];
+      } else {
+        // Look up as tenant_id
+        const { data: property } = await supabase
+          .from('properties')
           .select('id')
-          .eq('property_id', property.id);
+          .eq('tenant_id', restaurantId)
+          .single();
         
-        if (restaurants && restaurants.length > 0) {
-          validRestaurantIds = restaurants.map(r => r.id);
+        if (property) {
+          const { data: restaurants } = await supabase
+            .from('restaurants')
+            .select('id')
+            .eq('property_id', property.id);
+          
+          if (restaurants && restaurants.length > 0) {
+            validRestaurantIds = restaurants.map(r => r.id);
+          } else {
+            return res.json({
+              success: true,
+              data: tableNumber ? null : []
+            });
+          }
         } else {
           return res.json({
             success: true,
             data: tableNumber ? null : []
           });
         }
+      }
+    } else {
+      // No restaurantId provided
+      if (user) {
+        // Authenticated portal user - fetch assignments for all accessible restaurants
+        if (user.role === 'SuperAdmin') {
+          // SuperAdmin can see all restaurants
+          const { data: allRestaurants } = await supabase
+            .from('restaurants')
+            .select('id');
+          if (allRestaurants && allRestaurants.length > 0) {
+            validRestaurantIds = allRestaurants.map(r => r.id);
+          } else {
+            return res.json({
+              success: true,
+              data: []
+            });
+          }
+        } else if (user.propertyId) {
+          // Admin/Manager - fetch restaurants for their property
+          const { data: restaurants } = await supabase
+            .from('restaurants')
+            .select('id')
+            .eq('property_id', user.propertyId);
+          
+          if (restaurants && restaurants.length > 0) {
+            validRestaurantIds = restaurants.map(r => r.id);
+          } else {
+            return res.json({
+              success: true,
+              data: []
+            });
+          }
+        } else {
+          return res.json({
+            success: true,
+            data: []
+          });
+        }
       } else {
-        return res.json({
-          success: true,
-          data: tableNumber ? null : []
+        // Not authenticated and no restaurantId - return error (for tablet app compatibility)
+        return res.status(400).json({
+          success: false,
+          error: 'restaurantId is required',
+          code: 'VALIDATION_ERROR'
         });
       }
     }
