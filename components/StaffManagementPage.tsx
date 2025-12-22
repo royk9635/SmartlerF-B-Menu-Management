@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Staff, Restaurant, Property, User, UserRole } from '../types';
+import { Staff, Restaurant, Property, User, UserRole, StaffAssignment } from '../types';
 import * as api from '../services/supabaseService';
 import { staffApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -16,6 +16,7 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
     const [allStaff, setAllStaff] = useState<Omit<Staff, 'pin'>[]>([]);
     const [allRestaurants, setAllRestaurants] = useState<Restaurant[]>([]);
     const [allProperties, setAllProperties] = useState<Property[]>([]);
+    const [staffAssignments, setStaffAssignments] = useState<StaffAssignment[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [filterPropertyId, setFilterPropertyId] = useState<string>('');
     const [filterRestaurantId, setFilterRestaurantId] = useState<string>('');
@@ -44,8 +45,26 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
             if (filterPropertyId) params.propertyId = filterPropertyId;
             if (filterRestaurantId) params.restaurantId = filterRestaurantId;
             
-            const fetchedStaff = await staffApi.getAll(params);
+            const [fetchedStaff, fetchedAssignments] = await Promise.all([
+                staffApi.getAll(params),
+                // Fetch active assignments for all restaurants in the filtered set
+                (async () => {
+                    try {
+                        const assignmentParams: { restaurantId?: string; activeOnly?: boolean } = { activeOnly: true };
+                        if (filterRestaurantId) {
+                            assignmentParams.restaurantId = filterRestaurantId;
+                        }
+                        const assignments = await staffApi.getAssignments(assignmentParams);
+                        return Array.isArray(assignments) ? assignments : [assignments];
+                    } catch (error) {
+                        console.error('Error fetching assignments:', error);
+                        return [];
+                    }
+                })()
+            ]);
+            
             setAllStaff(fetchedStaff);
+            setStaffAssignments(fetchedAssignments);
         } catch (error) {
             showToast('Failed to fetch data.', 'error');
         } finally {
@@ -61,10 +80,41 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
 
     useEffect(() => {
         fetchData();
-    }, [fetchData]);
+        
+        // Refresh table assignments every 10 seconds to show real-time updates
+        const interval = setInterval(() => {
+            const assignmentParams: { restaurantId?: string; activeOnly?: boolean } = { activeOnly: true };
+            if (filterRestaurantId) {
+                assignmentParams.restaurantId = filterRestaurantId;
+            }
+            staffApi.getAssignments(assignmentParams)
+                .then(assignments => {
+                    const assignmentArray = Array.isArray(assignments) ? assignments : [assignments];
+                    setStaffAssignments(assignmentArray);
+                })
+                .catch(error => {
+                    console.error('Error refreshing assignments:', error);
+                });
+        }, 10000); // Refresh every 10 seconds
+        
+        return () => clearInterval(interval);
+    }, [fetchData, filterRestaurantId]);
     
     const propertyMap = useMemo(() => new Map(allProperties.map(p => [p.id, p.name])), [allProperties]);
     const restaurantMap = useMemo(() => new Map(allRestaurants.map(r => [r.id, r.name])), [allRestaurants]);
+    
+    // Create a map of staffId -> array of table numbers they're currently assigned to
+    const staffTableMap = useMemo(() => {
+        const map = new Map<string, number[]>();
+        staffAssignments
+            .filter(assignment => assignment.isActive)
+            .forEach(assignment => {
+                const currentTables = map.get(assignment.staffId) || [];
+                currentTables.push(assignment.tableNumber);
+                map.set(assignment.staffId, currentTables);
+            });
+        return map;
+    }, [staffAssignments]);
 
     const visibleProperties = useMemo(() => {
         if (isSuperAdmin) {
@@ -232,6 +282,7 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
                             {isSuperAdmin && (
                                 <th className="text-left py-3 px-4 uppercase font-semibold text-sm text-slate-600">Property</th>
                             )}
+                            <th className="text-left py-3 px-4 uppercase font-semibold text-sm text-slate-600">Current Tables</th>
                             <th className="text-left py-3 px-4 uppercase font-semibold text-sm text-slate-600">Status</th>
                             <th className="text-center py-3 px-4 uppercase font-semibold text-sm text-slate-600">Actions</th>
                         </tr>
@@ -254,6 +305,26 @@ const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ showToast, cu
                                         })()}
                                     </td>
                                 )}
+                                <td className="py-3 px-4">
+                                    {(() => {
+                                        const tables = staffTableMap.get(staff.id) || [];
+                                        if (tables.length === 0) {
+                                            return <span className="text-slate-400 italic">Not assigned</span>;
+                                        }
+                                        return (
+                                            <div className="flex flex-wrap gap-1">
+                                                {tables.sort((a, b) => a - b).map(tableNum => (
+                                                    <span
+                                                        key={tableNum}
+                                                        className="px-2 py-1 text-xs font-semibold rounded-full bg-primary-100 text-primary-800"
+                                                    >
+                                                        Table {tableNum}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
+                                </td>
                                 <td className="py-3 px-4">
                                     <button
                                         onClick={() => handleToggleActive(staff)}
