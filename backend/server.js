@@ -4539,14 +4539,37 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       console.log(`[Orders API] Using restaurantId from API token: ${finalRestaurantId}`);
     }
     
+    // If API token has propertyId but no restaurantId, filter by property's restaurants
+    let restaurantIdsToFilter = null;
+    if (!finalRestaurantId && req.authType === 'api_token' && req.user.propertyId) {
+      // Get all restaurants for this property
+      const { data: propertyRestaurants } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('property_id', req.user.propertyId);
+      
+      if (propertyRestaurants && propertyRestaurants.length > 0) {
+        restaurantIdsToFilter = propertyRestaurants.map(r => r.id);
+        console.log(`[Orders API] Using propertyId from API token, found ${restaurantIdsToFilter.length} restaurants`);
+      }
+    }
+    
     // Explicitly select fields including Order ID, table number, and timestamp (TIMESTAMPTZ)
     let query = supabase
       .from('live_orders')
       .select('id, table_number, placed_at, items, total_amount, restaurant_id, status, payment_id, payment_status, payment_method, payment_date')
       .order('placed_at', { ascending: false });
     
+    // Apply restaurant filtering
     if (finalRestaurantId) {
       query = query.eq('restaurant_id', finalRestaurantId);
+      console.log(`[Orders API] Filtering by restaurantId: ${finalRestaurantId}`);
+    } else if (restaurantIdsToFilter && restaurantIdsToFilter.length > 0) {
+      query = query.in('restaurant_id', restaurantIdsToFilter);
+      console.log(`[Orders API] Filtering by property restaurants: ${restaurantIdsToFilter.length} restaurants`);
+    } else if (!finalRestaurantId && !restaurantIdsToFilter) {
+      // No filter - show all orders (for SuperAdmin or when no token restrictions)
+      console.log(`[Orders API] No restaurant filter applied - showing all orders`);
     }
     
     // Filter by status if provided (case-insensitive matching)
@@ -4565,18 +4588,21 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       // Use mapped value if available, otherwise use the provided value as-is
       const dbStatus = statusMap[statusStr.toLowerCase()] || statusStr;
       query = query.eq('status', dbStatus);
+      console.log(`[Orders API] Filtering by status: ${dbStatus}`);
     }
     
     const { data, error } = await query;
     
     if (error) {
-      console.error('Supabase error:', error);
+      console.error('[Orders API] Supabase error:', error);
       return res.status(500).json({
         success: false,
         message: 'Failed to fetch orders',
         error: error.message
       });
     }
+    
+    console.log(`[Orders API] Found ${data?.length || 0} orders`);
     
     // Transform snake_case to camelCase and ensure timestamp is properly formatted
     const transformedData = (data || []).map(order => {
@@ -4594,10 +4620,11 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       data: transformedData
     });
   } catch (err) {
-    console.error('Error fetching orders:', err);
+    console.error('[Orders API] Error fetching orders:', err);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: err.message
     });
   }
 });
