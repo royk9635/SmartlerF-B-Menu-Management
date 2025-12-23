@@ -1568,23 +1568,30 @@ app.get('/api/restaurants/:restaurantId/api-token', authenticateToken, async (re
 // QR CODE ENDPOINTS FOR TABLES
 // ========================================
 
-// Get PWA base URL from environment or use default
+// Get PWA/Tablet App base URL from environment or use default
 const getPwaBaseUrl = () => {
-  // Use environment variable if set (should include protocol)
-  if (process.env.PWA_BASE_URL) {
-    return process.env.PWA_BASE_URL;
-  }
-  // In production (Vercel), use VERCEL_URL if available (already includes protocol)
-  if (process.env.VERCEL_URL) {
-    // VERCEL_URL might or might not include protocol, so check and add if needed
-    const vercelUrl = process.env.VERCEL_URL;
-    if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
-      return vercelUrl;
+  // Priority 1: Use TABLET_APP_URL environment variable (for tablet app/PWA)
+  if (process.env.TABLET_APP_URL) {
+    const tabletUrl = process.env.TABLET_APP_URL.trim();
+    // Ensure it has protocol
+    if (tabletUrl.startsWith('http://') || tabletUrl.startsWith('https://')) {
+      return tabletUrl;
     }
-    return `https://${vercelUrl}`;
+    return `https://${tabletUrl}`;
   }
-  // Default to production URL
-  return 'https://smartler-f-b-menu-management.vercel.app';
+  
+  // Priority 2: Use PWA_BASE_URL environment variable (legacy/alternative)
+  if (process.env.PWA_BASE_URL) {
+    const pwaUrl = process.env.PWA_BASE_URL.trim();
+    // Ensure it has protocol
+    if (pwaUrl.startsWith('http://') || pwaUrl.startsWith('https://')) {
+      return pwaUrl;
+    }
+    return `https://${pwaUrl}`;
+  }
+  
+  // Default: Use the tablet app URL (Netlify)
+  return 'https://tabpwaa.netlify.app';
 };
 
 // Generate QR code URL for a table
