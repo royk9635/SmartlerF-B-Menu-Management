@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ApiToken, Restaurant, Property, GenerateTokenRequest } from '../types';
 import * as api from '../services/supabaseService';
+import { apiTokensApi } from '../services/apiService';
 import { LoadingSpinner } from './LoadingSpinner';
 import ConfirmationModal from './ConfirmationModal';
 import { PlusIcon, TrashIcon, CopyIcon, KeyIcon } from './Icons';
@@ -165,8 +166,8 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
                 request.propertyId = selectedPropertyId;
             }
 
-            console.log('Calling api.generateApiToken with:', request);
-            const generatedToken = await api.generateApiToken(request, currentUser.id);
+            console.log('Calling apiTokensApi.generate with:', request);
+            const generatedToken = await apiTokensApi.generate(request);
             console.log('Token generated successfully:', generatedToken);
             
             setNewToken(generatedToken);
