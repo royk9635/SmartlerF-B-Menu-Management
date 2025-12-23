@@ -120,6 +120,27 @@ export const restaurantsApi = {
   delete: async (id: string): Promise<void> => {
     await httpClient.delete(`${API_CONFIG.ENDPOINTS.RESTAURANTS}/${id}`);
   },
+
+  /**
+   * Get API token for a specific restaurant
+   * Returns the API token (not JWT) that was created in the API Tokens page
+   * API Endpoint: GET /api/restaurants/:restaurantId/api-token
+   * 
+   * @param restaurantId - The restaurant ID
+   * @returns Object containing the API token (starts with 'tb_'), restaurantId, and expiresAt
+   */
+  getApiToken: async (restaurantId: string): Promise<{
+    token: string; // API token (starts with 'tb_'), NOT a JWT token
+    restaurantId: string;
+    expiresAt: string | null;
+  }> => {
+    const response = await httpClient.get<ApiResponse<{
+      token: string; // This is the API token from api_tokens table, NOT JWT
+      restaurantId: string;
+      expiresAt: string | null;
+    }>>(`${API_CONFIG.ENDPOINTS.RESTAURANTS}/${restaurantId}/api-token`);
+    return response.data;
+  },
 };
 
 // --- Categories API ---
