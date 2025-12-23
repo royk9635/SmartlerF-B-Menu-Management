@@ -10,20 +10,24 @@ import {
 
 // --- Authentication API ---
 export const authApi = {
-  login: async (email: string, password: string): Promise<{ user: User; token: string }> => {
-    const response = await httpClient.post<ApiResponse<{ user: User; token: string }>>(
+  login: async (email: string, password: string): Promise<{ user: User; token: string; refreshToken?: string }> => {
+    const response = await httpClient.post<ApiResponse<{ user: User; token: string; refreshToken?: string }>>(
       API_CONFIG.ENDPOINTS.AUTH.LOGIN,
       { email, password }
     );
     
-    // Store token
+    // Store tokens
     httpClient.setAuthToken(response.data.token);
+    if (response.data.refreshToken) {
+      httpClient.setRefreshToken(response.data.refreshToken);
+    }
     return response.data;
   },
 
   logout: async (): Promise<void> => {
     await httpClient.post(API_CONFIG.ENDPOINTS.AUTH.LOGOUT);
     httpClient.clearAuthToken();
+    httpClient.clearRefreshToken();
   },
 
   getCurrentUser: async (): Promise<User> => {
@@ -31,11 +35,22 @@ export const authApi = {
     return response.data;
   },
 
-  refreshToken: async (): Promise<{ token: string }> => {
-    const response = await httpClient.post<ApiResponse<{ token: string }>>(
-      API_CONFIG.ENDPOINTS.AUTH.REFRESH
+  refreshToken: async (): Promise<{ token: string; refreshToken?: string }> => {
+    const refreshToken = httpClient.getRefreshToken();
+    if (!refreshToken) {
+      throw new Error('No refresh token available');
+    }
+    
+    const response = await httpClient.post<ApiResponse<{ token: string; refreshToken?: string }>>(
+      API_CONFIG.ENDPOINTS.AUTH.REFRESH,
+      { refreshToken }
     );
+    
+    // Store new tokens
     httpClient.setAuthToken(response.data.token);
+    if (response.data.refreshToken) {
+      httpClient.setRefreshToken(response.data.refreshToken);
+    }
     return response.data;
   },
 
@@ -382,9 +397,7 @@ export const apiTokensApi = {
 
   verify: async (token: string): Promise<ApiToken> => {
     const response = await httpClient.get<ApiResponse<ApiToken>>('/tokens/verify', {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
+      'Authorization': `Bearer ${token}`
     });
     return response.data;
   },

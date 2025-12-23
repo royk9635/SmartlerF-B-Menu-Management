@@ -22,6 +22,7 @@ import StaffManagementPage from './components/StaffManagementPage'
 import LoginPage from './components/LoginPage'
 import SignUpPage from './components/SignUpPage'
 import * as api from './services/supabaseService'
+import { tokenRefreshService } from './services/tokenRefreshService'
 
 type MenuItemSelection = {
     propertyId: string,
@@ -54,6 +55,58 @@ const App: React.FC = () => {
         setIsLoading(false);
     }, []);
 
+    // Start token refresh service when user is authenticated
+    useEffect(() => {
+        if (currentUser) {
+            tokenRefreshService.start();
+        } else {
+            tokenRefreshService.stop();
+        }
+
+        // Cleanup on unmount or when user logs out
+        return () => {
+            tokenRefreshService.stop();
+        };
+    }, [currentUser]);
+
+    // Portal auto-refresh every 60 seconds (only when authenticated and page is visible)
+    useEffect(() => {
+        if (!currentUser) {
+            return;
+        }
+
+        let refreshInterval: NodeJS.Timeout | null = null;
+        let isPageVisible = true;
+
+        // Handle page visibility
+        const handleVisibilityChange = () => {
+            isPageVisible = !document.hidden;
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        // Refresh function - soft refresh (reload page data without full reload)
+        const refreshPage = () => {
+            if (!isPageVisible) {
+                return; // Don't refresh if page is not visible
+            }
+
+            // Trigger a soft refresh by reloading the page
+            // This ensures all data is fresh
+            window.location.reload();
+        };
+
+        // Start refresh interval (60 seconds)
+        refreshInterval = setInterval(refreshPage, 60 * 1000);
+
+        // Cleanup
+        return () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [currentUser]);
+
     const urlParams = new URLSearchParams(window.location.search);
     const displayRestaurantId = urlParams.get('display_restaurant_id');
 
@@ -78,6 +131,8 @@ const App: React.FC = () => {
         } catch (e) {
             console.error('Logout error:', e);
         }
+        // Stop token refresh service
+        tokenRefreshService.stop();
         setCurrentUser(null);
         localStorage.removeItem('smartler_user');
         setCurrentPage('properties');

@@ -26,7 +26,7 @@ class HttpClient {
   }
 
   // Get auth token from localStorage
-  private getAuthToken(): string | null {
+  public getAuthToken(): string | null {
     return localStorage.getItem('auth_token');
   }
 
@@ -38,6 +38,63 @@ class HttpClient {
   // Clear auth token
   public clearAuthToken(): void {
     localStorage.removeItem('auth_token');
+  }
+
+  // Get refresh token from localStorage
+  public getRefreshToken(): string | null {
+    return localStorage.getItem('refresh_token');
+  }
+
+  // Set refresh token
+  public setRefreshToken(token: string): void {
+    localStorage.setItem('refresh_token', token);
+  }
+
+  // Clear refresh token
+  public clearRefreshToken(): void {
+    localStorage.removeItem('refresh_token');
+  }
+
+  // Refresh access token using refresh token
+  private async refreshAccessToken(): Promise<boolean> {
+    const refreshToken = this.getRefreshToken();
+    if (!refreshToken) {
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const data = await response.json();
+      if (data.success && data.data?.token && data.data?.refreshToken) {
+        this.setAuthToken(data.data.token);
+        this.setRefreshToken(data.data.refreshToken);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      return false;
+    }
+  }
+
+  // Check if token is expired (for Supabase tokens, we can't decode JWT easily, so we'll rely on 401 errors)
+  // This is a placeholder - actual expiration checking would require JWT decoding
+  private isTokenExpired(): boolean {
+    // For now, we'll rely on 401 errors to detect expiration
+    // In a production app, you could decode the JWT and check exp claim
+    return false;
   }
 
   // Build headers with authentication
@@ -92,10 +149,9 @@ class HttpClient {
         errors: data.errors,
       };
       
-      // Handle authentication errors - clear potentially invalid token
+      // Handle authentication errors - tokens are cleared in request method if refresh fails
       if (response.status === 401) {
-        console.warn('⚠️ Authentication failed (401), clearing auth token');
-        this.clearAuthToken();
+        console.warn('⚠️ Authentication failed (401)');
       }
       
       throw error;
@@ -104,12 +160,13 @@ class HttpClient {
     return data;
   }
 
-  // Generic request method
+  // Generic request method with automatic token refresh on 401
   private async request<T>(
     method: string,
     endpoint: string,
     data?: any,
-    customHeaders?: Record<string, string>
+    customHeaders?: Record<string, string>,
+    retryOn401: boolean = true
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
     const headers = this.buildHeaders(customHeaders);
@@ -138,9 +195,34 @@ class HttpClient {
     try {
       const response = await fetch(url, config);
       clearTimeout(timeoutId);
+      
+      // Handle 401 errors with token refresh
+      if (response.status === 401 && retryOn401) {
+        const refreshToken = this.getRefreshToken();
+        if (refreshToken) {
+          // Try to refresh the token
+          const refreshed = await this.refreshAccessToken();
+          if (refreshed) {
+            // Token refreshed successfully, retry the request once
+            console.log('🔄 Token refreshed, retrying request');
+            return this.request<T>(method, endpoint, data, customHeaders, false);
+          }
+        }
+        
+        // Refresh failed or no refresh token - clear tokens and handle as normal 401
+        this.clearAuthToken();
+        this.clearRefreshToken();
+      }
+      
       return await this.handleResponse<T>(response);
-    } catch (error) {
+    } catch (error: any) {
       clearTimeout(timeoutId);
+      
+      // Handle retry flag from handleResponse
+      if (error.shouldRetry && retryOn401) {
+        console.log('🔄 Retrying request after token refresh');
+        return this.request<T>(method, endpoint, data, customHeaders, false);
+      }
       
       if (error instanceof Error) {
         if (error.name === 'AbortError') {

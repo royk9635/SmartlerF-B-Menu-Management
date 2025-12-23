@@ -760,12 +760,13 @@ app.post('/api/auth/login', async (req, res) => {
         });
       }
       
-      // Return session token from Supabase Auth
+      // Return session token and refresh token from Supabase Auth
       res.json({
         success: true,
         data: {
           user: newUser,
-          token: authData.session.access_token // Use Supabase session token
+          token: authData.session.access_token, // Use Supabase session token
+          refreshToken: authData.session.refresh_token // Include refresh token
         }
       });
       return;
@@ -777,12 +778,13 @@ app.post('/api/auth/login', async (req, res) => {
       .update({ last_login: new Date().toISOString() })
       .eq('id', user.id);
     
-    // Return session token from Supabase Auth
+    // Return session token and refresh token from Supabase Auth
     res.json({
       success: true,
       data: {
         user,
-        token: authData.session.access_token // Use Supabase session token
+        token: authData.session.access_token, // Use Supabase session token
+        refreshToken: authData.session.refresh_token // Include refresh token
       }
     });
   } catch (error) {
@@ -792,6 +794,64 @@ app.post('/api/auth/login', async (req, res) => {
       success: false,
       message: error instanceof Error ? error.message : 'Internal server error',
       error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Refresh token endpoint - refreshes Supabase Auth session
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Refresh token is required'
+      });
+    }
+    
+    // Use Supabase Auth to refresh the session
+    const { data: authData, error: authError } = await supabaseAuth.auth.refreshSession({
+      refresh_token: refreshToken
+    });
+    
+    if (authError || !authData.session) {
+      console.error('Token refresh error:', authError);
+      return res.status(401).json({
+        success: false,
+        message: authError?.message || 'Invalid or expired refresh token'
+      });
+    }
+    
+    // Get user details from users table
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, name, email, role, property_id')
+      .eq('id', authData.session.user.id)
+      .single();
+    
+    if (userError || !user) {
+      console.error('User not found during token refresh:', userError);
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Return new access token and refresh token
+    res.json({
+      success: true,
+      data: {
+        user,
+        token: authData.session.access_token,
+        refreshToken: authData.session.refresh_token
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Internal server error'
     });
   }
 });
@@ -2789,7 +2849,7 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
     pinAttempts.delete(ip);
     
     // Generate JWT token for staff authentication
-    // Token expires in 24 hours
+    // Token expires in 365 days (1 year) - long-lived token for tablet apps
     const tokenPayload = {
       staffId: staff.id,
       restaurantId: staff.restaurant_id,
@@ -2798,7 +2858,7 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
     
     let token = null;
     if (JWT_SECRET) {
-      token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
+      token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '365d' });
     }
     
     // Return staff details (without PIN) and token
