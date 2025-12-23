@@ -111,7 +111,12 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
     };
 
     const ensureAuthenticated = async (): Promise<boolean> => {
-        // Check if we have a valid session via Supabase
+        // Check if we have a currentUser prop (authenticated via backend API)
+        if (currentUser && currentUser.id) {
+            return true;
+        }
+
+        // Fallback: Check if we have a valid session via Supabase
         try {
             const user = await api.getCurrentUser();
             if (user) {

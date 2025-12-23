@@ -94,7 +94,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, currentU
                             page="analytics" 
                             label="Analytics" 
                             currentPage={currentPage} 
-                            setCurrentPage={setCurrentPage} 
+                            setCurrentPage={setCurrentPage}
                             icon={<AnalyticsIcon className={currentPage === 'analytics' ? 'text-white' : 'text-slate-500 group-hover:text-primary-800'}/>}
                         />
                         <NavItem 

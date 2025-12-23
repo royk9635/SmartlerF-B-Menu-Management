@@ -52,7 +52,7 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ showToast, currentUser }) => {
                 // Optionally redirect to login or show a message
                 showToast(errorMsg, 'error');
             } else {
-                setError(err instanceof Error ? err.message : 'Failed to fetch orders.');
+            setError(err instanceof Error ? err.message : 'Failed to fetch orders.');
             }
         } finally {
             setLoading(false);
