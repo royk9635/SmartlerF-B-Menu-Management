@@ -90,6 +90,8 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
             });
             
             console.log('QR Code API Response:', result);
+            console.log('Response type:', typeof result);
+            console.log('Response keys:', result ? Object.keys(result) : 'result is null/undefined');
             
             // Ensure result exists
             if (!result) {
@@ -99,14 +101,32 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
                 return;
             }
             
-            // Check if result.data exists and is an array
+            // Handle different response structures
+            let qrCodesArray: QRCodeData[] = [];
+            
+            // Case 1: result.data is an array (expected structure)
             if (result.data && Array.isArray(result.data)) {
-                setQrCodes(result.data);
-                showToast(`Generated ${result.data.length} QR codes successfully!`, 'success');
+                qrCodesArray = result.data;
+            }
+            // Case 2: result itself is an array (direct array response)
+            else if (Array.isArray(result)) {
+                qrCodesArray = result;
+            }
+            // Case 3: result has a different structure
+            else {
+                console.error('Invalid response structure:', result);
+                console.error('Expected result.data to be an array, but got:', typeof result.data);
+                console.error('Full result:', JSON.stringify(result, null, 2));
+                showToast(`Invalid response structure. Expected array but got: ${typeof result.data}`, 'error');
+                setQrCodes([]);
+                return;
+            }
+            
+            if (qrCodesArray.length > 0) {
+                setQrCodes(qrCodesArray);
+                showToast(`Generated ${qrCodesArray.length} QR codes successfully!`, 'success');
             } else {
-                console.error('Invalid response structure. Expected result.data to be an array:', result);
-                console.error('Response keys:', Object.keys(result));
-                showToast(`Invalid response from server. Expected array but got: ${typeof result.data}`, 'error');
+                showToast('No QR codes generated. Please check table range.', 'error');
                 setQrCodes([]);
             }
         } catch (error: any) {
@@ -114,7 +134,8 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
             console.error('Error details:', {
                 message: error?.message,
                 status: error?.status,
-                errors: error?.errors
+                errors: error?.errors,
+                stack: error?.stack
             });
             const errorMessage = error?.message || error?.error || 'Unknown error';
             showToast(`Failed to generate QR codes: ${errorMessage}`, 'error');

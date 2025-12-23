@@ -530,17 +530,23 @@ export const qrCodeApi = {
     if (options?.format) queryParams.append('format', options.format);
     
     const url = `/restaurants/${restaurantId}/tables/qr-codes${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const response = await httpClient.get<ApiResponse<{
-      data: Array<{
-        tableNumber: number;
-        qrCodeUrl: string;
-        qrCodeDataUrl: string | null;
-      }>;
-      restaurantId: string;
-      restaurantName: string;
-      totalTables: number;
-    }>>(url);
-    return response.data;
+    const response = await httpClient.get<any>(url);
+    
+    // Backend returns: { success: true, data: qrCodes, restaurantId, restaurantName, totalTables }
+    // where qrCodes is the array directly
+    // httpClient returns the whole response object
+    // We need to restructure it to match the expected return type
+    if (response && response.success) {
+      return {
+        data: response.data || [],
+        restaurantId: response.restaurantId || restaurantId,
+        restaurantName: response.restaurantName || '',
+        totalTables: response.totalTables || (Array.isArray(response.data) ? response.data.length : 0)
+      };
+    }
+    
+    // Fallback if structure is different
+    throw new Error('Invalid response structure from QR code API');
   },
 
   validateTable: async (restaurantId: string, tableNumber: number): Promise<{
