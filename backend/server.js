@@ -2955,62 +2955,114 @@ app.get('/api/staff/assignments', async (req, res) => {
     const { tableNumber, restaurantId, staffId, activeOnly } = req.query;
     
     // Try to authenticate (optional for portal users)
-    // Supports both Supabase Auth tokens and JWT tokens
+    // Supports API tokens, Supabase Auth tokens, and JWT tokens
     let user = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
       
-      // First, try Supabase Auth token
-      try {
-        const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
-        if (!authError && authUser) {
-          // Get user details from users table
-          const { data: userData } = await supabase
-            .from('users')
-            .select('id, name, email, role, property_id')
-            .eq('id', authUser.id)
-            .single();
-          if (userData) {
-            user = {
-              id: userData.id,
-              role: userData.role,
-              propertyId: userData.property_id
-            };
-          }
-        }
-      } catch (supabaseError) {
-        // Not a Supabase token, try JWT
+      // Check if token looks like an API token (starts with smtlr_ or tb_)
+      // API tokens should be checked FIRST to avoid format errors
+      const isApiTokenFormat = token.startsWith('smtlr_') || token.startsWith('tb_');
+      
+      if (isApiTokenFormat) {
+        // This looks like an API token - validate it directly
         try {
-          if (JWT_SECRET) {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            if (decoded && decoded.id) {
-              // Get user details from users table
-              const { data: userData } = await supabase
-                .from('users')
-                .select('id, name, email, role, property_id')
-                .eq('id', decoded.id)
-                .single();
-              if (userData) {
-                user = {
-                  id: userData.id,
-                  role: userData.role,
-                  propertyId: userData.property_id
-                };
-              } else if (decoded.role) {
-                // JWT might contain user info directly (backward compatibility)
-                user = {
-                  id: decoded.id,
-                  role: decoded.role,
-                  propertyId: decoded.propertyId
-                };
-              }
+          const { data: apiToken, error } = await supabase
+            .from('api_tokens')
+            .select('*')
+            .eq('token', token)
+            .eq('is_active', true)
+            .single();
+          
+          if (!error && apiToken) {
+            // Check if token is expired
+            if (apiToken.expires_at && new Date(apiToken.expires_at) < new Date()) {
+              console.warn(`[Assignments API] API token expired: ${apiToken.id}`);
+            } else {
+              // Valid API token - use restaurantId/propertyId from token
+              // For API tokens, we'll use restaurantId from query or token
+              console.log(`[Assignments API] Authenticated via API token: ${apiToken.name}, restaurantId: ${apiToken.restaurant_id || 'none'}, propertyId: ${apiToken.property_id || 'none'}`);
+              // API tokens don't have a user role, so we'll handle them in the restaurantId logic below
+              // For now, set user to indicate authentication succeeded
+              user = {
+                id: apiToken.id,
+                role: 'API_TOKEN',
+                propertyId: apiToken.property_id,
+                restaurantId: apiToken.restaurant_id
+              };
             }
+          } else {
+            console.log(`[Assignments API] API token not found or inactive`);
           }
-        } catch (jwtError) {
-          // Not a JWT token either, continue without user (for tablet app compatibility)
+        } catch (apiTokenError) {
+          console.log(`[Assignments API] Error checking API token: ${apiTokenError.message}`);
         }
       }
+      
+      // If not an API token or API token validation failed, try Supabase Auth
+      if (!user && !isApiTokenFormat) {
+        try {
+          const { data: { user: authUser }, error: authError } = await supabaseAuth.auth.getUser(token);
+          if (!authError && authUser) {
+            // Get user details from users table
+            const { data: userData } = await supabase
+              .from('users')
+              .select('id, name, email, role, property_id')
+              .eq('id', authUser.id)
+              .single();
+            if (userData) {
+              user = {
+                id: userData.id,
+                role: userData.role,
+                propertyId: userData.property_id
+              };
+              console.log(`[Assignments API] Authenticated user: ${userData.role}, propertyId: ${userData.property_id || 'none'}`);
+            } else {
+              console.warn(`[Assignments API] User not found in database: ${authUser.id}`);
+            }
+          } else if (authError) {
+            console.log(`[Assignments API] Supabase auth error: ${authError.message}`);
+          }
+        } catch (supabaseError) {
+          // Not a Supabase token, try JWT
+          console.log(`[Assignments API] Not a Supabase token, trying JWT...`);
+          try {
+            if (JWT_SECRET) {
+              const decoded = jwt.verify(token, JWT_SECRET);
+              if (decoded && decoded.id) {
+                // Get user details from users table
+                const { data: userData } = await supabase
+                  .from('users')
+                  .select('id, name, email, role, property_id')
+                  .eq('id', decoded.id)
+                  .single();
+                if (userData) {
+                  user = {
+                    id: userData.id,
+                    role: userData.role,
+                    propertyId: userData.property_id
+                  };
+                  console.log(`[Assignments API] Authenticated user via JWT: ${userData.role}, propertyId: ${userData.property_id || 'none'}`);
+                } else if (decoded.role) {
+                  // JWT might contain user info directly (backward compatibility)
+                  user = {
+                    id: decoded.id,
+                    role: decoded.role,
+                    propertyId: decoded.propertyId
+                  };
+                  console.log(`[Assignments API] Authenticated user via JWT (direct): ${decoded.role}, propertyId: ${decoded.propertyId || 'none'}`);
+                }
+              }
+            }
+          } catch (jwtError) {
+            // Not a JWT token either, continue without user (for tablet app compatibility)
+            console.log(`[Assignments API] Not a JWT token: ${jwtError.message}`);
+          }
+        }
+      }
+    } else {
+      console.log(`[Assignments API] No authorization header provided`);
     }
     
     // Handle restaurantId
@@ -3054,14 +3106,35 @@ app.get('/api/staff/assignments', async (req, res) => {
     } else {
       // No restaurantId provided
       if (user) {
-        // Authenticated portal user - fetch assignments for all accessible restaurants
-        if (user.role === 'SuperAdmin') {
+        // Check if this is an API token with restaurantId
+        if (user.role === 'API_TOKEN' && user.restaurantId) {
+          // API token with restaurantId - use it
+          validRestaurantIds = [user.restaurantId];
+          console.log(`[Assignments API] Using restaurantId from API token: ${user.restaurantId}`);
+        } else if (user.role === 'API_TOKEN' && user.propertyId) {
+          // API token with propertyId - fetch restaurants for that property
+          const { data: restaurants } = await supabase
+            .from('restaurants')
+            .select('id')
+            .eq('property_id', user.propertyId);
+          
+          if (restaurants && restaurants.length > 0) {
+            validRestaurantIds = restaurants.map(r => r.id);
+            console.log(`[Assignments API] Using restaurants from API token property: ${restaurants.length} restaurants`);
+          } else {
+            return res.json({
+              success: true,
+              data: []
+            });
+          }
+        } else if (user.role === 'SuperAdmin') {
           // SuperAdmin can see all restaurants
           const { data: allRestaurants } = await supabase
             .from('restaurants')
             .select('id');
           if (allRestaurants && allRestaurants.length > 0) {
             validRestaurantIds = allRestaurants.map(r => r.id);
+            console.log(`[Assignments API] SuperAdmin access - fetching all restaurants: ${allRestaurants.length} restaurants`);
           } else {
             return res.json({
               success: true,
@@ -3077,6 +3150,7 @@ app.get('/api/staff/assignments', async (req, res) => {
           
           if (restaurants && restaurants.length > 0) {
             validRestaurantIds = restaurants.map(r => r.id);
+            console.log(`[Assignments API] Fetching restaurants for property: ${restaurants.length} restaurants`);
           } else {
             return res.json({
               success: true,
@@ -3084,6 +3158,8 @@ app.get('/api/staff/assignments', async (req, res) => {
             });
           }
         } else {
+          // Authenticated but no propertyId/restaurantId context
+          console.warn(`[Assignments API] Authenticated user but no propertyId/restaurantId context. Role: ${user.role}`);
           return res.json({
             success: true,
             data: []
@@ -3091,8 +3167,10 @@ app.get('/api/staff/assignments', async (req, res) => {
         }
       } else {
         // Not authenticated and no restaurantId - return error (for tablet app compatibility)
+        console.warn(`[Assignments API] Missing restaurantId and user not authenticated. Auth header: ${authHeader ? 'present' : 'missing'}`);
         return res.status(400).json({
           success: false,
+          message: 'restaurantId is required',
           error: 'restaurantId is required',
           code: 'VALIDATION_ERROR'
         });
