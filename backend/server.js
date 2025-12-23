@@ -1570,13 +1570,18 @@ app.get('/api/restaurants/:restaurantId/api-token', authenticateToken, async (re
 
 // Get PWA base URL from environment or use default
 const getPwaBaseUrl = () => {
-  // In production (Vercel), use the same domain
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  // Use environment variable if set
+  // Use environment variable if set (should include protocol)
   if (process.env.PWA_BASE_URL) {
     return process.env.PWA_BASE_URL;
+  }
+  // In production (Vercel), use VERCEL_URL if available (already includes protocol)
+  if (process.env.VERCEL_URL) {
+    // VERCEL_URL might or might not include protocol, so check and add if needed
+    const vercelUrl = process.env.VERCEL_URL;
+    if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
+      return vercelUrl;
+    }
+    return `https://${vercelUrl}`;
   }
   // Default to production URL
   return 'https://smartler-f-b-menu-management.vercel.app';

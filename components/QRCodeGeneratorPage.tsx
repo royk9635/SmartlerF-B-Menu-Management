@@ -89,18 +89,35 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
                 format: 'both'
             });
             
-            // Ensure result.data exists and is an array
-            if (result && result.data && Array.isArray(result.data)) {
+            console.log('QR Code API Response:', result);
+            
+            // Ensure result exists
+            if (!result) {
+                console.error('No response received from server');
+                showToast('No response from server', 'error');
+                setQrCodes([]);
+                return;
+            }
+            
+            // Check if result.data exists and is an array
+            if (result.data && Array.isArray(result.data)) {
                 setQrCodes(result.data);
                 showToast(`Generated ${result.data.length} QR codes successfully!`, 'success');
             } else {
-                console.error('Invalid response structure:', result);
-                showToast('Invalid response from server', 'error');
+                console.error('Invalid response structure. Expected result.data to be an array:', result);
+                console.error('Response keys:', Object.keys(result));
+                showToast(`Invalid response from server. Expected array but got: ${typeof result.data}`, 'error');
                 setQrCodes([]);
             }
         } catch (error: any) {
             console.error('Error generating QR codes:', error);
-            showToast(`Failed to generate QR codes: ${error?.message || 'Unknown error'}`, 'error');
+            console.error('Error details:', {
+                message: error?.message,
+                status: error?.status,
+                errors: error?.errors
+            });
+            const errorMessage = error?.message || error?.error || 'Unknown error';
+            showToast(`Failed to generate QR codes: ${errorMessage}`, 'error');
             setQrCodes([]);
         } finally {
             setGenerating(false);
