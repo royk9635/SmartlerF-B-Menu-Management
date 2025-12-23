@@ -40,9 +40,10 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
         hasFetchedRef.current = true;
         setLoading(true);
         try {
-            // Fetch data with error handling for each call using Supabase service
+            // Fetch data with error handling for each call
+            // Use backend API for tokens to ensure consistency with token generation
             const results = await Promise.allSettled([
-                api.getApiTokens().catch(err => {
+                apiTokensApi.getAll().catch(err => {
                     console.error('Failed to fetch tokens:', err);
                     return [];
                 }),
@@ -58,8 +59,11 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
             
             // Handle tokens
             if (results[0].status === 'fulfilled') {
-                setTokens(results[0].value || []);
+                const fetchedTokens = results[0].value || [];
+                console.log('Fetched tokens:', fetchedTokens);
+                setTokens(fetchedTokens);
             } else {
+                console.error('Failed to fetch tokens:', results[0].status === 'rejected' ? results[0].reason : 'Unknown error');
                 setTokens([]);
             }
             
@@ -92,6 +96,7 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
             setProperties([]);
         } finally {
             setLoading(false);
+            hasFetchedRef.current = false; // Reset after fetch completes
         }
     }, [showToast, loading]);
 
@@ -205,17 +210,18 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
         setDeleteAction(() => async () => {
             try {
                 if (token.isActive) {
-                    await api.revokeApiToken(token.id);
+                    await apiTokensApi.revoke(token.id);
                     showToast('Token revoked successfully!', 'success');
                 } else {
-                    await api.activateApiToken(token.id);
+                    await apiTokensApi.activate(token.id);
                     showToast('Token activated successfully!', 'success');
                 }
                 hasFetchedRef.current = false; // Allow refetch
                 await fetchData();
                 setConfirmModalOpen(false);
             } catch (error) {
-                showToast(`Failed to update token. ${error instanceof Error ? error.message : ''}`, 'error');
+                console.error('Error updating token:', error);
+                showToast(`Failed to update token. ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
             }
         });
         setConfirmModalOpen(true);
@@ -225,13 +231,14 @@ const ApiTokensPage: React.FC<ApiTokensPageProps> = ({ showToast, currentUser })
         setConfirmMessage(`Are you sure you want to permanently delete the token "${token.name}"? This action cannot be undone.`);
         setDeleteAction(() => async () => {
             try {
-                await api.deleteApiToken(token.id);
+                await apiTokensApi.delete(token.id);
                 showToast('Token deleted successfully!', 'success');
                 hasFetchedRef.current = false; // Allow refetch
                 await fetchData();
                 setConfirmModalOpen(false);
             } catch (error) {
-                showToast(`Failed to delete token. ${error instanceof Error ? error.message : ''}`, 'error');
+                console.error('Error deleting token:', error);
+                showToast(`Failed to delete token. ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
             }
         });
         setConfirmModalOpen(true);
