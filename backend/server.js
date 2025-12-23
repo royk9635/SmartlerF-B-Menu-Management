@@ -2974,7 +2974,8 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
     let query = supabase
       .from('staff')
       .select('id, name, role, restaurant_id, is_active, created_at, updated_at')
-      .eq('pin', pin);
+      .eq('pin', pin)
+      .eq('is_active', true); // Only get active staff
     
     // If restaurantId provided, filter by it
     if (restaurantId) {
@@ -3015,7 +3016,8 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
       }
     }
     
-    const { data: staff, error } = await query.maybeSingle();
+    // Get all matching staff (may be multiple if PIN is duplicated)
+    const { data: staffResults, error } = await query;
     
     if (error) {
       console.error('Supabase error verifying PIN:', error);
@@ -3026,7 +3028,7 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
       });
     }
     
-    if (!staff) {
+    if (!staffResults || staffResults.length === 0) {
       // Log failed attempt
       console.warn(`[PIN Verification] Failed PIN attempt from IP: ${req.ip || 'unknown'}`);
       return res.status(401).json({
@@ -3035,6 +3037,28 @@ app.post('/api/staff/verify-pin', rateLimitPinVerification, async (req, res) => 
         code: 'INVALID_PIN'
       });
     }
+    
+    // If multiple staff found with same PIN
+    if (staffResults.length > 1) {
+      // If restaurantId was provided, this shouldn't happen - log warning
+      if (restaurantId) {
+        console.warn(`[PIN Verification] Multiple active staff found with PIN ${pin} in restaurant ${restaurantId}. Using first result.`);
+      } else {
+        console.warn(`[PIN Verification] Multiple active staff found with PIN ${pin}. RestaurantId required to identify staff.`);
+        return res.status(400).json({
+          success: false,
+          error: 'Multiple staff members found with this PIN. Please specify restaurantId.',
+          code: 'MULTIPLE_STAFF_FOUND',
+          data: {
+            count: staffResults.length,
+            restaurants: staffResults.map(s => ({ id: s.restaurant_id }))
+          }
+        });
+      }
+    }
+    
+    // Use the first (or only) staff member
+    const staff = staffResults[0];
     
     if (!staff.is_active) {
       return res.status(403).json({
