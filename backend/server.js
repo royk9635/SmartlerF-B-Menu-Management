@@ -1273,30 +1273,38 @@ app.delete('/api/properties/:id', async (req, res) => {
 app.get('/api/restaurants', authenticateToken, async (req, res) => {
   try {
     const { propertyId } = req.query;
+    
+    // Use propertyId from API token if not provided in query
+    let finalPropertyId = propertyId;
+    if (!finalPropertyId && req.authType === 'api_token' && req.user.propertyId) {
+      finalPropertyId = req.user.propertyId;
+      console.log(`[Restaurants API] Using propertyId from API token: ${finalPropertyId}`);
+    }
+    
     let query = supabase
       .from('restaurants')
       .select('*')
       .order('created_at', { ascending: false });
     
-    if (propertyId) {
+    if (finalPropertyId) {
       // Check if propertyId is a valid UUID
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       
-      if (uuidRegex.test(propertyId)) {
+      if (uuidRegex.test(finalPropertyId)) {
         // It's a UUID, use it directly
-      query = query.eq('property_id', propertyId);
+      query = query.eq('property_id', finalPropertyId);
       } else {
         // It's not a UUID, treat it as tenant_id and look up the property first
         const { data: property, error: propertyError } = await supabase
           .from('properties')
           .select('id')
-          .eq('tenant_id', propertyId)
+          .eq('tenant_id', finalPropertyId)
           .single();
         
         if (propertyError || !property) {
           // If property not found, return empty array instead of 404
           // This allows the request to succeed even if property doesn't exist
-          console.warn(`Property not found with tenant_id: ${propertyId}, returning empty restaurants list`);
+          console.warn(`Property not found with tenant_id: ${finalPropertyId}, returning empty restaurants list`);
           return res.json({
             success: true,
             data: []
@@ -1462,13 +1470,21 @@ app.delete('/api/restaurants/:id', authenticateToken, async (req, res) => {
 const handleGetCategories = async (req, res) => {
   try {
     const { restaurantId } = req.query;
+    
+    // Use restaurantId from API token if not provided in query
+    let finalRestaurantId = restaurantId;
+    if (!finalRestaurantId && req.authType === 'api_token' && req.user.restaurantId) {
+      finalRestaurantId = req.user.restaurantId;
+      console.log(`[Categories API] Using restaurantId from API token: ${finalRestaurantId}`);
+    }
+    
     let query = supabase
       .from('menu_categories')
       .select('*')
       .order('sort_order', { ascending: true });
     
-    if (restaurantId) {
-      query = query.eq('restaurant_id', restaurantId);
+    if (finalRestaurantId) {
+      query = query.eq('restaurant_id', finalRestaurantId);
     }
     
     const { data, error } = await query;
@@ -1692,11 +1708,39 @@ const validateAttributes = (attributes) => {
 // Menu items endpoints handler
 const handleGetMenuItems = async (req, res) => {
   try {
-    const { categoryId, subCategoryId } = req.query;
+    const { categoryId, subCategoryId, restaurantId } = req.query;
+    
+    // Use restaurantId from API token if not provided in query
+    let finalRestaurantId = restaurantId;
+    if (!finalRestaurantId && req.authType === 'api_token' && req.user.restaurantId) {
+      finalRestaurantId = req.user.restaurantId;
+      console.log(`[Menu Items API] Using restaurantId from API token: ${finalRestaurantId}`);
+    }
+    
     let query = supabase
       .from('menu_items')
       .select('*')
       .order('sort_order', { ascending: true });
+    
+    // Filter by restaurant if we have restaurantId (from query or API token)
+    if (finalRestaurantId) {
+      // Need to filter by restaurant through categories
+      const { data: categories } = await supabase
+        .from('menu_categories')
+        .select('id')
+        .eq('restaurant_id', finalRestaurantId);
+      
+      if (categories && categories.length > 0) {
+        const categoryIds = categories.map(c => c.id);
+        query = query.in('category_id', categoryIds);
+      } else {
+        // No categories for this restaurant, return empty array
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
+    }
     
     if (categoryId) {
       query = query.eq('category_id', categoryId);
@@ -2295,17 +2339,43 @@ app.post('/api/service-requests', async (req, res) => {
       });
     }
     
+    // Try to authenticate to get restaurantId from API token
+    let finalRestaurantId = restaurantId;
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const isApiTokenFormat = token.startsWith('smtlr_') || token.startsWith('tb_');
+      
+      if (isApiTokenFormat) {
+        try {
+          const { data: apiToken } = await supabase
+            .from('api_tokens')
+            .select('restaurant_id')
+            .eq('token', token)
+            .eq('is_active', true)
+            .single();
+          
+          if (apiToken && apiToken.restaurant_id && !finalRestaurantId) {
+            finalRestaurantId = apiToken.restaurant_id;
+            console.log(`[Service Requests API] Using restaurantId from API token: ${finalRestaurantId}`);
+          }
+        } catch (err) {
+          // Ignore errors, continue with restaurantId from body
+        }
+      }
+    }
+    
     // Validate restaurantId if provided
     let validRestaurantId = null;
-    if (restaurantId) {
+    if (finalRestaurantId) {
       // Check if it's a valid UUID
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(restaurantId)) {
+      if (!uuidRegex.test(finalRestaurantId)) {
         // If not a UUID, try to look it up as tenant_id
         const { data: property } = await supabase
           .from('properties')
           .select('id')
-          .eq('tenant_id', restaurantId)
+          .eq('tenant_id', finalRestaurantId)
           .single();
         
         if (!property) {
@@ -2331,7 +2401,7 @@ app.post('/api/service-requests', async (req, res) => {
         const { data: restaurant } = await supabase
           .from('restaurants')
           .select('id')
-          .eq('id', restaurantId)
+          .eq('id', finalRestaurantId)
           .single();
         
         if (!restaurant) {
@@ -2341,7 +2411,7 @@ app.post('/api/service-requests', async (req, res) => {
           });
         }
         
-        validRestaurantId = restaurantId;
+        validRestaurantId = finalRestaurantId;
       }
     }
     
@@ -2431,17 +2501,43 @@ app.post('/api/public/service-requests', async (req, res) => {
       });
     }
     
+    // Try to authenticate to get restaurantId from API token
+    let finalRestaurantId = restaurantId;
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const isApiTokenFormat = token.startsWith('smtlr_') || token.startsWith('tb_');
+      
+      if (isApiTokenFormat) {
+        try {
+          const { data: apiToken } = await supabase
+            .from('api_tokens')
+            .select('restaurant_id')
+            .eq('token', token)
+            .eq('is_active', true)
+            .single();
+          
+          if (apiToken && apiToken.restaurant_id && !finalRestaurantId) {
+            finalRestaurantId = apiToken.restaurant_id;
+            console.log(`[Service Requests API] Using restaurantId from API token: ${finalRestaurantId}`);
+          }
+        } catch (err) {
+          // Ignore errors, continue with restaurantId from body
+        }
+      }
+    }
+    
     // Validate restaurantId if provided
     let validRestaurantId = null;
-    if (restaurantId) {
+    if (finalRestaurantId) {
       // Check if it's a valid UUID
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(restaurantId)) {
+      if (!uuidRegex.test(finalRestaurantId)) {
         // If not a UUID, try to look it up as tenant_id
         const { data: property } = await supabase
           .from('properties')
           .select('id')
-          .eq('tenant_id', restaurantId)
+          .eq('tenant_id', finalRestaurantId)
           .single();
         
         if (!property) {
@@ -2467,7 +2563,7 @@ app.post('/api/public/service-requests', async (req, res) => {
         const { data: restaurant } = await supabase
           .from('restaurants')
           .select('id')
-          .eq('id', restaurantId)
+          .eq('id', finalRestaurantId)
           .single();
         
         if (!restaurant) {
@@ -2477,7 +2573,7 @@ app.post('/api/public/service-requests', async (req, res) => {
           });
         }
         
-        validRestaurantId = restaurantId;
+        validRestaurantId = finalRestaurantId;
       }
     }
     
@@ -2544,23 +2640,30 @@ app.get('/api/service-requests', authenticateToken, async (req, res) => {
   try {
     const { restaurantId, status, tableNumber } = req.query;
     
+    // Use restaurantId from API token if not provided in query
+    let finalRestaurantId = restaurantId;
+    if (!finalRestaurantId && req.authType === 'api_token' && req.user.restaurantId) {
+      finalRestaurantId = req.user.restaurantId;
+      console.log(`[Service Requests API] Using restaurantId from API token: ${finalRestaurantId}`);
+    }
+    
     let query = supabase
       .from('service_requests')
       .select('*')
       .order('created_at', { ascending: false });
     
     // Apply filters
-    if (restaurantId) {
+    if (finalRestaurantId) {
       // Handle both UUID and tenant_id
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (uuidRegex.test(restaurantId)) {
-        query = query.eq('restaurant_id', restaurantId);
+      if (uuidRegex.test(finalRestaurantId)) {
+        query = query.eq('restaurant_id', finalRestaurantId);
       } else {
         // Look up property by tenant_id, then get restaurants
         const { data: property } = await supabase
           .from('properties')
           .select('id')
-          .eq('tenant_id', restaurantId)
+          .eq('tenant_id', finalRestaurantId)
           .single();
         
         if (property) {
@@ -3484,23 +3587,29 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
         });
       }
     } else if (req.authType === 'supabase' || req.authType === 'jwt') {
-      // For Supabase Auth or JWT tokens (portal users), require restaurantId or propertyId in query
-      // unless user is SuperAdmin (who can see all)
-      // Also check if request is from tablet app (Origin: none) - always require restaurantId
+      // For Supabase Auth or JWT tokens (portal users), use propertyId from user profile as fallback
+      // if not provided in query parameters
+      if (!finalPropertyId && req.user.propertyId) {
+        finalPropertyId = req.user.propertyId;
+        console.log(`[Staff API] Using propertyId from user profile: ${finalPropertyId}`);
+      }
+      
+      // Check if request is from tablet app (Origin: none)
       const origin = req.headers.origin || req.headers['origin'] || 'none';
       const isTabletApp = !origin || origin === 'none' || origin === 'null';
       
-      if (!restaurantId && !propertyId) {
+      // Only require explicit restaurantId/propertyId if user has no propertyId in profile
+      if (!finalRestaurantId && !finalPropertyId) {
         // Check if user is SuperAdmin - if so, they can see all staff (but only from portal, not tablet)
         if (req.user.role !== 'SuperAdmin' || isTabletApp) {
           // Non-SuperAdmin users or tablet apps must provide restaurantId or propertyId
-          console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, Origin: ${origin}, IsTabletApp: ${isTabletApp}`);
+          console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, Origin: ${origin}, IsTabletApp: ${isTabletApp}, User propertyId: ${req.user.propertyId || 'none'}`);
           console.log(`[Staff API] Returning 400 error - restaurantId/propertyId required`);
           return res.status(400).json({
             success: false,
             message: 'restaurantId or propertyId is required for this request',
             code: 'VALIDATION_ERROR',
-            hint: 'Tablet apps must provide restaurantId in the query parameters. Example: GET /api/staff?restaurantId=<restaurant-id>'
+            hint: 'Tablet apps must provide restaurantId in the query parameters, or the authenticated user must have a propertyId in their profile. Example: GET /api/staff?restaurantId=<restaurant-id>'
           });
         } else {
           console.log(`[Staff API] SuperAdmin access allowed without restaurantId/propertyId filter`);
@@ -3976,14 +4085,22 @@ app.delete('/api/staff/:id', authenticateToken, async (req, res) => {
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
     const { restaurantId, status } = req.query;
+    
+    // Use restaurantId from API token if not provided in query
+    let finalRestaurantId = restaurantId;
+    if (!finalRestaurantId && req.authType === 'api_token' && req.user.restaurantId) {
+      finalRestaurantId = req.user.restaurantId;
+      console.log(`[Orders API] Using restaurantId from API token: ${finalRestaurantId}`);
+    }
+    
     // Explicitly select fields including Order ID, table number, and timestamp (TIMESTAMPTZ)
     let query = supabase
       .from('live_orders')
       .select('id, table_number, placed_at, items, total_amount, restaurant_id, status, payment_id, payment_status, payment_method, payment_date')
       .order('placed_at', { ascending: false });
     
-    if (restaurantId) {
-      query = query.eq('restaurant_id', restaurantId);
+    if (finalRestaurantId) {
+      query = query.eq('restaurant_id', finalRestaurantId);
     }
     
     // Filter by status if provided (case-insensitive matching)
