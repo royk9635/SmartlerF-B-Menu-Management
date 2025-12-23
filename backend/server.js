@@ -3353,7 +3353,7 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
       const { data: restaurants, error: restaurantsError } = await supabase
         .from('restaurants')
         .select('id')
-        .eq('property_id', propertyId);
+        .eq('property_id', finalPropertyId);
       
       if (restaurantsError) {
         console.error('Supabase error fetching restaurants:', restaurantsError);
@@ -3419,13 +3419,16 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
     const { data, error } = await query;
     
     if (error) {
-      console.error('Supabase error:', error);
+      console.error('[Staff API] Supabase error:', error);
       return res.status(500).json({
         success: false,
         message: 'Failed to fetch staff',
         error: error.message
       });
     }
+    
+    // Debug logging for production troubleshooting
+    console.log(`[Staff API] GET /api/staff - Auth: ${req.authType || 'none'}, RestaurantId: ${finalRestaurantId || 'none'}, PropertyId: ${finalPropertyId || 'none'}, ActiveOnly: ${activeOnlyFlag}, Found: ${(data || []).length} staff`);
     
     // Transform and exclude PIN from response
     const transformedData = (data || []).map(staff => {
