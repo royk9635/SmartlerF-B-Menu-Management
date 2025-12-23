@@ -3594,25 +3594,21 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
         console.log(`[Staff API] Using propertyId from user profile: ${finalPropertyId}`);
       }
       
-      // Check if request is from tablet app (Origin: none)
-      const origin = req.headers.origin || req.headers['origin'] || 'none';
-      const isTabletApp = !origin || origin === 'none' || origin === 'null';
-      
       // Only require explicit restaurantId/propertyId if user has no propertyId in profile
       if (!finalRestaurantId && !finalPropertyId) {
-        // Check if user is SuperAdmin - if so, they can see all staff (but only from portal, not tablet)
-        if (req.user.role !== 'SuperAdmin' || isTabletApp) {
-          // Non-SuperAdmin users or tablet apps must provide restaurantId or propertyId
-          console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, Origin: ${origin}, IsTabletApp: ${isTabletApp}, User propertyId: ${req.user.propertyId || 'none'}`);
+        // SuperAdmin users authenticated via Supabase/JWT can see all staff (no filter needed)
+        if (req.user.role === 'SuperAdmin') {
+          console.log(`[Staff API] SuperAdmin access allowed without restaurantId/propertyId filter`);
+        } else {
+          // Non-SuperAdmin users must provide restaurantId or propertyId
+          console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, User propertyId: ${req.user.propertyId || 'none'}`);
           console.log(`[Staff API] Returning 400 error - restaurantId/propertyId required`);
           return res.status(400).json({
             success: false,
             message: 'restaurantId or propertyId is required for this request',
             code: 'VALIDATION_ERROR',
-            hint: 'Tablet apps must provide restaurantId in the query parameters, or the authenticated user must have a propertyId in their profile. Example: GET /api/staff?restaurantId=<restaurant-id>'
+            hint: 'You must provide restaurantId or propertyId in the query parameters, or have a propertyId in your user profile. Example: GET /api/staff?restaurantId=<restaurant-id>'
           });
-        } else {
-          console.log(`[Staff API] SuperAdmin access allowed without restaurantId/propertyId filter`);
         }
       }
     }
