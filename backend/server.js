@@ -1466,6 +1466,103 @@ app.delete('/api/restaurants/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Get API token for a specific restaurant
+app.get('/api/restaurants/:restaurantId/api-token', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Restaurant ID is required'
+      });
+    }
+    
+    // Verify restaurant exists
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id, property_id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found'
+      });
+    }
+    
+    // Authorization checks
+    let isAuthorized = false;
+    
+    // Check if user is SuperAdmin
+    if (req.user.role === 'SuperAdmin') {
+      isAuthorized = true;
+      console.log(`[Restaurant API Token] SuperAdmin access granted for restaurant: ${restaurantId}`);
+    }
+    // Check if user has restaurantId from API token and it matches
+    else if (req.authType === 'api_token' && req.user.restaurantId === restaurantId) {
+      isAuthorized = true;
+      console.log(`[Restaurant API Token] API token access granted for restaurant: ${restaurantId}`);
+    }
+    // Check if user has propertyId and restaurant belongs to that property
+    else if (req.user.propertyId && restaurant.property_id === req.user.propertyId) {
+      isAuthorized = true;
+      console.log(`[Restaurant API Token] Property-based access granted for restaurant: ${restaurantId}`);
+    }
+    
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized'
+      });
+    }
+    
+    // Query for active API token for this restaurant
+    const now = new Date().toISOString();
+    const { data: apiToken, error } = await supabase
+      .from('api_tokens')
+      .select('token, expires_at')
+      .eq('restaurant_id', restaurantId)
+      .eq('is_active', true)
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (error || !apiToken) {
+      // Check if error is "not found" (PGRST116) vs other error
+      if (error && error.code === 'PGRST116') {
+        return res.status(404).json({
+          success: false,
+          error: 'API token not found for this restaurant'
+        });
+      }
+      
+      console.error('[Restaurant API Token] Error fetching API token:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch API token'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        token: apiToken.token,
+        restaurantId: restaurantId,
+        expiresAt: apiToken.expires_at || null
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching API token for restaurant:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch API token'
+    });
+  }
+});
+
 // Categories endpoints handler
 const handleGetCategories = async (req, res) => {
   try {
