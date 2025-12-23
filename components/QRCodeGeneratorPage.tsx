@@ -33,7 +33,7 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
     const hasFetchedRef = useRef(false);
 
     const fetchData = useCallback(async () => {
-        if (hasFetchedRef.current && loading) return;
+        if (hasFetchedRef.current) return;
         hasFetchedRef.current = true;
         setLoading(true);
         try {
@@ -54,10 +54,9 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
         } finally {
             setLoading(false);
         }
-    }, [showToast, loading]);
+    }, [showToast]);
 
     useEffect(() => {
-        hasFetchedRef.current = false;
         fetchData();
     }, [fetchData]);
 
@@ -90,11 +89,19 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
                 format: 'both'
             });
             
-            setQrCodes(result.data);
-            showToast(`Generated ${result.data.length} QR codes successfully!`, 'success');
+            // Ensure result.data exists and is an array
+            if (result && result.data && Array.isArray(result.data)) {
+                setQrCodes(result.data);
+                showToast(`Generated ${result.data.length} QR codes successfully!`, 'success');
+            } else {
+                console.error('Invalid response structure:', result);
+                showToast('Invalid response from server', 'error');
+                setQrCodes([]);
+            }
         } catch (error: any) {
             console.error('Error generating QR codes:', error);
             showToast(`Failed to generate QR codes: ${error?.message || 'Unknown error'}`, 'error');
+            setQrCodes([]);
         } finally {
             setGenerating(false);
         }
@@ -313,7 +320,7 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
                                 className="w-full border border-slate-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
                             >
                                 <option value="">All Properties</option>
-                                {properties.map(prop => (
+                                {(properties || []).map(prop => (
                                     <option key={prop.id} value={prop.id}>{prop.name}</option>
                                 ))}
                             </select>
@@ -331,7 +338,7 @@ const QRCodeGeneratorPage: React.FC<QRCodeGeneratorPageProps> = ({ showToast, cu
                             required
                         >
                             <option value="">Select Restaurant</option>
-                            {filteredRestaurants
+                            {(filteredRestaurants || [])
                                 .filter(r => !selectedPropertyId || r.propertyId === selectedPropertyId)
                                 .map(restaurant => (
                                     <option key={restaurant.id} value={restaurant.id}>
