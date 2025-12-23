@@ -3311,20 +3311,45 @@ app.post('/api/staff/unassign-table', authenticateStaffToken, async (req, res) =
 // Get all staff members (filtered by property/restaurant)
 app.get('/api/staff', authenticateToken, async (req, res) => {
   try {
-    const { propertyId, restaurantId } = req.query;
+    const { propertyId, restaurantId, activeOnly } = req.query;
     
     let query = supabase
       .from('staff')
       .select('id, name, pin, role, restaurant_id, is_active, created_at, updated_at')
       .order('created_at', { ascending: false });
     
+    // Handle API tokens - use restaurantId or propertyId from token if not provided in query
+    let finalRestaurantId = restaurantId;
+    let finalPropertyId = propertyId;
+    
+    if (req.authType === 'api_token') {
+      // If no restaurantId in query, use from API token
+      if (req.user.restaurantId && !restaurantId) {
+        finalRestaurantId = req.user.restaurantId;
+      }
+      // If no propertyId in query, use from API token
+      if (req.user.propertyId && !propertyId) {
+        finalPropertyId = req.user.propertyId;
+      }
+      
+      // Safety check: API tokens should have at least restaurantId or propertyId
+      if (!finalRestaurantId && !finalPropertyId) {
+        console.warn(`[Staff API] API token ${req.user.id} has no restaurantId or propertyId`);
+        return res.status(400).json({
+          success: false,
+          message: 'restaurantId or propertyId is required',
+          code: 'VALIDATION_ERROR'
+        });
+      }
+    }
+    
     // Filter by restaurant if provided
-    if (restaurantId) {
-      query = query.eq('restaurant_id', restaurantId);
+    if (finalRestaurantId) {
+      query = query.eq('restaurant_id', finalRestaurantId);
     }
     
     // Filter by property if provided (need to join with restaurants)
-    if (propertyId) {
+    if (finalPropertyId) {
       const { data: restaurants, error: restaurantsError } = await supabase
         .from('restaurants')
         .select('id')
@@ -3351,8 +3376,9 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
       }
     }
     
-    // For Admin/Manager roles, filter by their property
-    if (req.user.role !== 'SuperAdmin' && req.user.propertyId) {
+    // For portal users (Admin/Manager roles), filter by their property
+    // API tokens don't have roles, so skip this check for API tokens
+    if (req.authType !== 'api_token' && req.user.role !== 'SuperAdmin' && req.user.propertyId) {
       const { data: restaurants, error: restaurantsError } = await supabase
         .from('restaurants')
         .select('id')
@@ -3376,6 +3402,18 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
           data: []
         });
       }
+    }
+    
+    // Filter by active status if requested (default to true for tablet apps using API tokens)
+    const activeOnlyFlag = activeOnly === undefined 
+      ? (req.authType === 'api_token' ? true : undefined)
+      : (activeOnly === 'true' || activeOnly === true);
+    
+    if (activeOnlyFlag === true) {
+      query = query.eq('is_active', true);
+    } else if (activeOnlyFlag === false) {
+      // Explicitly false - show all including inactive
+      // No filter needed
     }
     
     const { data, error } = await query;
