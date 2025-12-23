@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as api from '../services/supabaseService';
 import { PublicMenu, MenuItem, SpecialType } from '../types';
 import { LoadingSpinner } from './LoadingSpinner';
+import { useTableContext } from '../contexts/TableContext';
 
 interface DigitalMenuPageProps {
     restaurantId: string;
@@ -29,6 +30,7 @@ const SpecialTypeBadge: React.FC<{ type: SpecialType }> = ({ type }) => {
 
 
 const DigitalMenuPage: React.FC<DigitalMenuPageProps> = ({ restaurantId }) => {
+    const { tableNumber } = useTableContext();
     const [menuData, setMenuData] = useState<PublicMenu | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -101,6 +103,13 @@ const DigitalMenuPage: React.FC<DigitalMenuPageProps> = ({ restaurantId }) => {
             <style>{animationStyles}</style>
             <header className="text-center mb-12 opacity-0 fade-in-up" style={{ animationDelay: '0ms' }}>
                 <h1 className="text-6xl font-bold tracking-tight text-slate-900">{menuData.restaurant.name}</h1>
+                {tableNumber && (
+                    <div className="mt-4 inline-block">
+                        <span className="bg-primary-600 text-white px-6 py-2 rounded-full text-xl font-semibold shadow-lg">
+                            Table {tableNumber}
+                        </span>
+                    </div>
+                )}
             </header>
             <main className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
                 {/* Column 1 */}

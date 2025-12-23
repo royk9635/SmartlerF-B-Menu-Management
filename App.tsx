@@ -19,10 +19,12 @@ import OrdersPage from './components/OrdersPage'
 import ServiceRequestsPage from './components/ServiceRequestsPage'
 import ApiTokensPage from './components/ApiTokensPage'
 import StaffManagementPage from './components/StaffManagementPage'
+import QRCodeGeneratorPage from './components/QRCodeGeneratorPage'
 import LoginPage from './components/LoginPage'
 import SignUpPage from './components/SignUpPage'
 import * as api from './services/supabaseService'
 import { tokenRefreshService } from './services/tokenRefreshService'
+import { TableContextProvider } from './contexts/TableContext'
 
 type MenuItemSelection = {
     propertyId: string,
@@ -107,11 +109,20 @@ const App: React.FC = () => {
         };
     }, [currentUser]);
 
+    // Check if this is a public menu page (PWA) - check for /menu path or restaurantId parameter
     const urlParams = new URLSearchParams(window.location.search);
     const displayRestaurantId = urlParams.get('display_restaurant_id');
-
-    if (displayRestaurantId) {
-        return <DigitalMenuPage restaurantId={displayRestaurantId} />;
+    const menuRestaurantId = urlParams.get('restaurantId');
+    const isMenuPath = window.location.pathname === '/menu' || window.location.pathname.includes('/menu');
+    
+    // If it's a public menu page (PWA), show DigitalMenuPage wrapped in TableContext
+    if (displayRestaurantId || (isMenuPath && menuRestaurantId)) {
+        const restaurantId = displayRestaurantId || menuRestaurantId || '';
+        return (
+            <TableContextProvider>
+                <DigitalMenuPage restaurantId={restaurantId} />
+            </TableContextProvider>
+        );
     }
 
     const showToast = (message: string, type: 'success' | 'error') => {
@@ -187,6 +198,8 @@ const App: React.FC = () => {
                  return <ApiTokensPage showToast={showToast} currentUser={currentUser} />
             case 'audit_log':
                  return <AuditLogPage showToast={showToast} currentUser={currentUser} />
+            case 'qr_codes':
+                 return <QRCodeGeneratorPage showToast={showToast} currentUser={currentUser} />
             default:
                 return <PropertiesPage showToast={showToast} currentUser={currentUser} />
         }
@@ -222,19 +235,21 @@ const App: React.FC = () => {
     }
 
     return (
-        <div className="bg-slate-50 min-h-screen font-sans flex">
-            <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} currentUser={currentUser} />
-            <div className="flex-1 flex flex-col">
-                <Header 
-                    currentUser={currentUser}
-                    onLogout={handleLogout}
-                />
-                <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-                    {renderPage()}
-                </main>
+        <TableContextProvider>
+            <div className="bg-slate-50 min-h-screen font-sans flex">
+                <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} currentUser={currentUser} />
+                <div className="flex-1 flex flex-col">
+                    <Header 
+                        currentUser={currentUser}
+                        onLogout={handleLogout}
+                    />
+                    <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+                        {renderPage()}
+                    </main>
+                </div>
+                {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
             </div>
-            {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        </div>
+        </TableContextProvider>
     )
 }
 

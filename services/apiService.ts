@@ -491,3 +491,68 @@ export const staffApi = {
     await httpClient.delete<ApiResponse<void>>(`/staff/${id}`);
   },
 };
+
+// --- QR Code API ---
+export const qrCodeApi = {
+  getTableQRCode: async (restaurantId: string, tableNumber: number): Promise<{
+    qrCodeUrl: string;
+    qrCodeDataUrl: string | null;
+    restaurantId: string;
+    tableNumber: number;
+    restaurantName: string;
+  }> => {
+    const response = await httpClient.get<ApiResponse<{
+      qrCodeUrl: string;
+      qrCodeDataUrl: string | null;
+      restaurantId: string;
+      tableNumber: number;
+      restaurantName: string;
+    }>>(`/restaurants/${restaurantId}/tables/${tableNumber}/qr-code`);
+    return response.data;
+  },
+
+  getBulkQRCodes: async (
+    restaurantId: string,
+    options?: { startTable?: number; endTable?: number; format?: string }
+  ): Promise<{
+    data: Array<{
+      tableNumber: number;
+      qrCodeUrl: string;
+      qrCodeDataUrl: string | null;
+    }>;
+    restaurantId: string;
+    restaurantName: string;
+    totalTables: number;
+  }> => {
+    const queryParams = new URLSearchParams();
+    if (options?.startTable) queryParams.append('startTable', options.startTable.toString());
+    if (options?.endTable) queryParams.append('endTable', options.endTable.toString());
+    if (options?.format) queryParams.append('format', options.format);
+    
+    const url = `/restaurants/${restaurantId}/tables/qr-codes${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await httpClient.get<ApiResponse<{
+      data: Array<{
+        tableNumber: number;
+        qrCodeUrl: string;
+        qrCodeDataUrl: string | null;
+      }>;
+      restaurantId: string;
+      restaurantName: string;
+      totalTables: number;
+    }>>(url);
+    return response.data;
+  },
+
+  validateTable: async (restaurantId: string, tableNumber: number): Promise<{
+    isValid: boolean;
+    tableNumber: number;
+    restaurantId: string;
+  }> => {
+    const response = await httpClient.get<ApiResponse<{
+      isValid: boolean;
+      tableNumber: number;
+      restaurantId: string;
+    }>>(`/restaurants/${restaurantId}/tables/${tableNumber}/validate`);
+    return response.data;
+  },
+};

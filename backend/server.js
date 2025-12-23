@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import fs from 'fs';
 import { createClient } from '@supabase/supabase-js';
+import QRCode from 'qrcode';
 
 const app = express();
 const server = http.createServer(app);
@@ -1559,6 +1560,322 @@ app.get('/api/restaurants/:restaurantId/api-token', authenticateToken, async (re
     res.status(500).json({
       success: false,
       error: 'Failed to fetch API token'
+    });
+  }
+});
+
+// ========================================
+// QR CODE ENDPOINTS FOR TABLES
+// ========================================
+
+// Get PWA base URL from environment or use default
+const getPwaBaseUrl = () => {
+  // In production (Vercel), use the same domain
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  // Use environment variable if set
+  if (process.env.PWA_BASE_URL) {
+    return process.env.PWA_BASE_URL;
+  }
+  // Default to production URL
+  return 'https://smartler-f-b-menu-management.vercel.app';
+};
+
+// Generate QR code URL for a table
+const generateQRCodeUrl = (restaurantId, tableNumber) => {
+  const baseUrl = getPwaBaseUrl();
+  return `${baseUrl}/menu?restaurantId=${restaurantId}&table=${tableNumber}`;
+};
+
+// Get QR code for a specific table
+app.get('/api/restaurants/:restaurantId/tables/:tableNumber/qr-code', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId, tableNumber } = req.params;
+    
+    // Validate inputs
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Restaurant ID is required'
+      });
+    }
+    
+    const tableNum = parseInt(tableNumber);
+    if (!tableNum || tableNum <= 0 || tableNum > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'Table number must be between 1 and 100'
+      });
+    }
+    
+    // Verify restaurant exists
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id, name, property_id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found'
+      });
+    }
+    
+    // Authorization checks
+    let isAuthorized = false;
+    
+    // Check if user is SuperAdmin
+    if (req.user.role === 'SuperAdmin') {
+      isAuthorized = true;
+    }
+    // Check if user has propertyId and restaurant belongs to that property
+    else if (req.user.propertyId && restaurant.property_id === req.user.propertyId) {
+      isAuthorized = true;
+    }
+    // Check if user has restaurantId from API token and it matches
+    else if (req.authType === 'api_token' && req.user.restaurantId === restaurantId) {
+      isAuthorized = true;
+    }
+    
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized'
+      });
+    }
+    
+    // Generate QR code URL
+    const qrCodeUrl = generateQRCodeUrl(restaurantId, tableNum);
+    
+    // Generate QR code image (base64)
+    let qrCodeDataUrl = null;
+    try {
+      qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        width: 300,
+        margin: 1
+      });
+    } catch (qrError) {
+      console.error('Error generating QR code image:', qrError);
+      // Continue without image - URL is still valid
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        qrCodeUrl: qrCodeUrl,
+        qrCodeDataUrl: qrCodeDataUrl,
+        restaurantId: restaurantId,
+        tableNumber: tableNum,
+        restaurantName: restaurant.name
+      }
+    });
+  } catch (err) {
+    console.error('Error generating QR code:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate QR code'
+    });
+  }
+});
+
+// Get QR codes for multiple tables (bulk)
+app.get('/api/restaurants/:restaurantId/tables/qr-codes', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    const { startTable = 1, endTable = 10, format = 'url' } = req.query;
+    
+    // Validate inputs
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Restaurant ID is required'
+      });
+    }
+    
+    const start = parseInt(startTable);
+    const end = parseInt(endTable);
+    
+    if (!start || start <= 0 || start > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'Start table number must be between 1 and 100'
+      });
+    }
+    
+    if (!end || end <= 0 || end > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'End table number must be between 1 and 100'
+      });
+    }
+    
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        error: 'Start table number must be less than or equal to end table number'
+      });
+    }
+    
+    // Verify restaurant exists
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id, name, property_id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        error: 'Restaurant not found'
+      });
+    }
+    
+    // Authorization checks
+    let isAuthorized = false;
+    
+    // Check if user is SuperAdmin
+    if (req.user.role === 'SuperAdmin') {
+      isAuthorized = true;
+    }
+    // Check if user has propertyId and restaurant belongs to that property
+    else if (req.user.propertyId && restaurant.property_id === req.user.propertyId) {
+      isAuthorized = true;
+    }
+    // Check if user has restaurantId from API token and it matches
+    else if (req.authType === 'api_token' && req.user.restaurantId === restaurantId) {
+      isAuthorized = true;
+    }
+    
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized'
+      });
+    }
+    
+    // Generate QR codes for table range
+    const qrCodes = [];
+    const generatePromises = [];
+    
+    for (let tableNum = start; tableNum <= end; tableNum++) {
+      const qrCodeUrl = generateQRCodeUrl(restaurantId, tableNum);
+      
+      if (format === 'image' || format === 'both') {
+        // Generate QR code image
+        generatePromises.push(
+          QRCode.toDataURL(qrCodeUrl, {
+            errorCorrectionLevel: 'M',
+            type: 'image/png',
+            width: 300,
+            margin: 1
+          }).then(qrCodeDataUrl => ({
+            tableNumber: tableNum,
+            qrCodeUrl: qrCodeUrl,
+            qrCodeDataUrl: qrCodeDataUrl
+          })).catch(() => ({
+            tableNumber: tableNum,
+            qrCodeUrl: qrCodeUrl,
+            qrCodeDataUrl: null
+          }))
+        );
+      } else {
+        // Just URL
+        qrCodes.push({
+          tableNumber: tableNum,
+          qrCodeUrl: qrCodeUrl,
+          qrCodeDataUrl: null
+        });
+      }
+    }
+    
+    // Wait for all QR code images to generate if needed
+    if (generatePromises.length > 0) {
+      const results = await Promise.all(generatePromises);
+      qrCodes.push(...results);
+    }
+    
+    // Sort by table number
+    qrCodes.sort((a, b) => a.tableNumber - b.tableNumber);
+    
+    res.json({
+      success: true,
+      data: qrCodes,
+      restaurantId: restaurantId,
+      restaurantName: restaurant.name,
+      totalTables: qrCodes.length
+    });
+  } catch (err) {
+    console.error('Error generating bulk QR codes:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate QR codes'
+    });
+  }
+});
+
+// Validate table number for a restaurant (optional)
+app.get('/api/restaurants/:restaurantId/tables/:tableNumber/validate', authenticateToken, async (req, res) => {
+  try {
+    const { restaurantId, tableNumber } = req.params;
+    
+    // Validate inputs
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Restaurant ID is required'
+      });
+    }
+    
+    const tableNum = parseInt(tableNumber);
+    if (!tableNum || tableNum <= 0 || tableNum > 100) {
+      return res.status(400).json({
+        success: false,
+        data: {
+          isValid: false,
+          tableNumber: tableNum,
+          restaurantId: restaurantId,
+          error: 'Table number must be between 1 and 100'
+        }
+      });
+    }
+    
+    // Verify restaurant exists
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('id')
+      .eq('id', restaurantId)
+      .single();
+    
+    if (restaurantError || !restaurant) {
+      return res.status(404).json({
+        success: false,
+        data: {
+          isValid: false,
+          tableNumber: tableNum,
+          restaurantId: restaurantId,
+          error: 'Restaurant not found'
+        }
+      });
+    }
+    
+    // Table number is valid if restaurant exists and table number is in valid range
+    res.json({
+      success: true,
+      data: {
+        isValid: true,
+        tableNumber: tableNum,
+        restaurantId: restaurantId
+      }
+    });
+  } catch (err) {
+    console.error('Error validating table:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to validate table'
     });
   }
 });
