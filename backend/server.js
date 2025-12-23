@@ -3357,11 +3357,12 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
         if (req.user.role !== 'SuperAdmin' || isTabletApp) {
           // Non-SuperAdmin users or tablet apps must provide restaurantId or propertyId
           console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, Origin: ${origin}, IsTabletApp: ${isTabletApp}`);
+          console.log(`[Staff API] Returning 400 error - restaurantId/propertyId required`);
           return res.status(400).json({
             success: false,
             message: 'restaurantId or propertyId is required for this request',
             code: 'VALIDATION_ERROR',
-            hint: 'Tablet apps must provide restaurantId in the query parameters'
+            hint: 'Tablet apps must provide restaurantId in the query parameters. Example: GET /api/staff?restaurantId=<restaurant-id>'
           });
         } else {
           console.log(`[Staff API] SuperAdmin access allowed without restaurantId/propertyId filter`);
