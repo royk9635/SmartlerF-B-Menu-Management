@@ -3313,6 +3313,10 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
   try {
     const { propertyId, restaurantId, activeOnly } = req.query;
     
+    // Debug logging for tablet app detection
+    const origin = req.headers.origin || req.headers['origin'];
+    console.log(`[Staff API] Request received - Auth: ${req.authType}, Origin: ${origin || 'none'}, Query params: restaurantId=${restaurantId || 'none'}, propertyId=${propertyId || 'none'}`);
+    
     let query = supabase
       .from('staff')
       .select('id, name, pin, role, restaurant_id, is_active, created_at, updated_at')
@@ -3340,6 +3344,28 @@ app.get('/api/staff', authenticateToken, async (req, res) => {
           message: 'restaurantId or propertyId is required',
           code: 'VALIDATION_ERROR'
         });
+      }
+    } else if (req.authType === 'supabase' || req.authType === 'jwt') {
+      // For Supabase Auth or JWT tokens (portal users), require restaurantId or propertyId in query
+      // unless user is SuperAdmin (who can see all)
+      // Also check if request is from tablet app (Origin: none) - always require restaurantId
+      const origin = req.headers.origin || req.headers['origin'] || 'none';
+      const isTabletApp = !origin || origin === 'none' || origin === 'null';
+      
+      if (!restaurantId && !propertyId) {
+        // Check if user is SuperAdmin - if so, they can see all staff (but only from portal, not tablet)
+        if (req.user.role !== 'SuperAdmin' || isTabletApp) {
+          // Non-SuperAdmin users or tablet apps must provide restaurantId or propertyId
+          console.warn(`[Staff API] Missing restaurantId/propertyId - Auth: ${req.authType}, Role: ${req.user.role || 'none'}, Origin: ${origin}, IsTabletApp: ${isTabletApp}`);
+          return res.status(400).json({
+            success: false,
+            message: 'restaurantId or propertyId is required for this request',
+            code: 'VALIDATION_ERROR',
+            hint: 'Tablet apps must provide restaurantId in the query parameters'
+          });
+        } else {
+          console.log(`[Staff API] SuperAdmin access allowed without restaurantId/propertyId filter`);
+        }
       }
     }
     
